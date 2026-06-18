@@ -1,11 +1,17 @@
 # go-bot (ANTIGRAVITY AI 코인선물 자동매매) — PROGRESS
 
-위치: `/Users/mr.joo/Desktop/go` · 모듈 `go-bot` · Go 1.25 · git 아님
+위치: `/Users/mr.joo/Desktop/go` · 모듈 `go-bot` · Go 1.25 · repo `github.com/joochanyang/bitgo`(main)
 스택: Bybit V5 Linear Futures + Gemini/OpenAI 결정 + 페이퍼/라이브 + 웹 대시보드(embed) + 백테스터
 
 ---
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
+
+### ✅ [git 초기화 + 첫 푸시] 이제 일반 커밋/푸시 가능 (2026-06-19)
+
+**프로젝트가 처음으로 git 레포가 됨**(이전 모든 세션 "git 아님·remote 미설정·미커밋"은 해소). `git init`→`.gitignore`→첫 커밋(48파일, `e050f02`)→`origin=https://github.com/joochanyang/bitgo`(joochanyang 계정)→`main` 푸시 완료. 로컬=원격 동기화.
+- ⚠️ **`.gitignore`로 비밀/상태파일 영구 제외**(절대 커밋 금지·추적 안 됨): `config.json`(Bybit/Gemini API키 자리)·`logs.json`·`trades.json`·`.env`·빌드산출물(`gobot-*`). 푸시 전·후 2회 점검=비밀파일 0개 확인.
+- gh 활성계정 joochanyang(레포주인과 일치) → 계정전환 불필요. 앞으로 커밋 시 푸시까지 함께(사용자 워크플로).
 
 ### ✅ [대시보드 전면 리디자인] 다크 카지노 → 정제된 퀀트 터미널 (2026-06-19, frontend-design 스킬)
 
@@ -93,7 +99,7 @@
   - **1h(부적합)**: WLDUSDT +6.6%이나 MDD41%·PF1.08·Sharpe0.03·**OOS −6.7%(엣지 소멸)**·타심볼 −20~−47%. 1h 돌파는 노이즈에 묻혀 비robust.
   - **4h(양호·실투입 후보)**: WLDUSDT **+35.9%**(MDD26%·승률42%·PF1.36·Sharpe0.14), **OOS 70/30: in +11.6% → out +21.7%(PF1.67) = 미보유 데이터서도 엣지 유지**(1h와 정반대). 타심볼 **NEARUSDT +62.9%·RENDERUSDT +51.3%**(둘 다 MDD~24%·PF1.4~1.5). (FETUSDT=Bybit linear 데이터없음). 같은 4h서 mean_reversion −32.6%(돌파만 통함), trend_following +51%(둘 다 추세TF서 작동).
   - **결론**: 변동성돌파는 **4h 타임프레임 전용**으로 보는 게 맞음(상위TF서 돌파신호가 유의미, 1h는 채프). 4종 심볼 중 3개서 일관 +수익·낮은MDD·OOS통과 = 실투입 후보 자격. **단 백테스트엔 funding/슬리피지 미반영(사용자 제외)·실거래 미검증 → 소액 드라이런 필수.**
-- ⚠️ **미커밋**(git 아님). 사용자 결정 대기: (a) config interval을 4h로 + 실거래 소액 드라이런 (b) 파라미터 추가 최적화(lookback·R:R) (c) 다른 방향.
+- 사용자 결정 대기: (a) config interval을 4h로 + 실거래 소액 드라이런 (b) 파라미터 추가 최적화(lookback·R:R) (c) 다른 방향.
 
 ---
 
