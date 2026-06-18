@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ANTIGRAVITY // AI 코인 선물 자동매매 봇</title>
+    <!-- Fonts: Sora (UI) · IBM Plex Mono (data) · Pretendard (KR) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="style.css">
+    <!-- TradingView Lightweight Charts CDN -->
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+    <!-- Glassmorphism Header -->
+    <header class="glass-header">
+        <div class="header-container">
+            <div class="logo">
+                <i class="fa-solid fa-microchip logo-icon"></i>
+                <span class="logo-text">ANTIGRAVITY <span class="accent-text">AI</span></span>
+            </div>
+            
+            <div class="system-status">
+                <span id="wsStatus" class="status-badge disconnect">
+                    <span class="status-dot"></span>
+                    <span id="wsStatusText">연결 끊김</span>
+                </span>
+
+                <span id="modeBadge" class="mode-badge paper">모의 매매</span>
+
+                <button id="toggleBotBtn" class="btn btn-primary start-btn">
+                    <i class="fa-solid fa-play"></i> 봇 시작
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main class="dashboard-content">
+        <!-- Overview Metrics Grid -->
+        <section class="metrics-grid">
+            <div class="metric-card" id="cardBalance">
+                <div class="metric-info">
+                    <span class="metric-title">사용 가능 잔고</span>
+                    <span id="balanceVal" class="metric-value">--.-- USDT</span>
+                </div>
+                <div class="metric-icon bg-emerald-light">
+                    <i class="fa-solid fa-wallet text-emerald"></i>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardUnrealizedPnL">
+                <div class="metric-info">
+                    <span class="metric-title">미실현 손익</span>
+                    <span id="unrealizedPnLVal" class="metric-value">--.-- USDT</span>
+                </div>
+                <div class="metric-icon bg-slate-light">
+                    <i class="fa-solid fa-chart-line text-slate"></i>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardDailyProfit">
+                <div class="metric-info">
+                    <span class="metric-title">실현 손익</span>
+                    <span id="realizedPnLVal" class="metric-value">--.-- USDT</span>
+                </div>
+                <div class="metric-icon bg-emerald-light">
+                    <i class="fa-solid fa-money-bill-trend-up text-emerald"></i>
+                </div>
+            </div>
+
+            <div class="metric-card" id="cardWinRate">
+                <div class="metric-info">
+                    <span class="metric-title">승률</span>
+                    <span id="winRateVal" class="metric-value">--.--%</span>
+                </div>
+                <div class="metric-icon bg-blue-light">
+                    <i class="fa-solid fa-percent text-blue"></i>
+                </div>
+            </div>
+        </section>
+
+        <!-- Current Situation (beginner-friendly) -->
+        <section class="dashboard-card" id="cardSituation">
+            <div class="card-header">
+                <h3><i class="fa-solid fa-circle-info"></i> 지금 상황 (쉽게 설명)</h3>
+                <button id="aiExplainBtn" class="btn btn-secondary btn-sm" title="AI가 현재 상황을 자연어로 설명">
+                    <i class="fa-solid fa-robot"></i> AI 해설
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="situationList" class="situation-list">
+                    <div class="no-data">봇을 시작하면 현재 상황을 쉬운 말로 설명해 드려요.</div>
+                </div>
+                <div id="aiExplainBox" class="ai-explain-box" style="display:none;"></div>
+            </div>
+        </section>
+
+        <!-- Main Workspace Grid -->
+        <div class="workspace-grid">
+            <!-- Left Panel: Chart (top) then Active Positions (below) -->
+            <div class="left-panel">
+                <!-- Interactive Chart Card -->
+                <div class="dashboard-card" id="cardMarketChart">
+                    <div class="card-header chart-header">
+                        <h3><i class="fa-solid fa-chart-candlestick"></i> 시세 차트</h3>
+                        <div class="chart-controls">
+                            <select id="chartSymbolSelect" class="select-input">
+                                <option value="WLDUSDT">WLDUSDT</option>
+                                <option value="FETUSDT">FETUSDT</option>
+                                <option value="NEARUSDT">NEARUSDT</option>
+                                <option value="RENDERUSDT">RENDERUSDT</option>
+                            </select>
+                            <button id="forceTickBtn" class="btn btn-secondary btn-sm" title="지금 수동으로 분석 실행">
+                                <i class="fa-solid fa-sync"></i> 지금 분석
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body chart-body">
+                        <div id="priceChart" class="price-chart-container"></div>
+                    </div>
+                </div>
+
+                <!-- Active Positions Card -->
+                <div class="dashboard-card" id="cardActivePositions">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-suitcase"></i> 보유 포지션</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="positionList" class="position-list">
+                            <!-- Populated dynamically via JS -->
+                            <div class="no-data">보유 중인 포지션이 없습니다.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: AI logs & System Config -->
+            <div class="right-panel">
+                <!-- Configuration Card -->
+                <div class="dashboard-card" id="cardSettings">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-sliders"></i> 봇 제어 설정</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="settingsForm" class="settings-form">
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="strategySelect">매매 전략</label>
+                                    <select id="strategySelect" class="select-input">
+                                        <option value="trend_following">추세 추종 (퀀트)</option>
+                                        <option value="mean_reversion">평균 회귀 (볼린저밴드 + RSI)</option>
+                                        <option value="volatility_breakout">변동성 돌파 (채널 + 거래량)</option>
+                                        <option value="ai">AI 브레인 전략 (Gemini/OpenAI)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="intervalSelect">매매 주기</label>
+                                    <select id="intervalSelect" class="select-input">
+                                        <option value="5m">5분</option>
+                                        <option value="15m">15분</option>
+                                        <option value="30m">30분</option>
+                                        <option value="1h">1시간</option>
+                                        <option value="4h">4시간</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="leverageInput">최대 레버리지</label>
+                                    <input type="number" id="leverageInput" min="1" max="10" class="number-input" value="3">
+                                </div>
+                                <div class="form-group">
+                                    <label for="riskInput">거래당 리스크 (%)</label>
+                                    <input type="number" id="riskInput" min="1" max="50" step="0.5" class="number-input" value="5">
+                                </div>
+                            </div>
+
+                            <div class="form-group checkbox-group">
+                                <input type="checkbox" id="paperTradingCheckbox" checked>
+                                <label for="paperTradingCheckbox" class="checkbox-label">
+                                    <span class="custom-checkbox"></span>
+                                    모의 매매 사용 (가상 체결)
+                                </label>
+                            </div>
+
+                            <div class="divider" id="apiKeysDivider">API 키 및 인증 정보</div>
+
+                            <div class="form-group" id="aiProviderGroup" style="display: none;">
+                                <label for="aiProviderSelect">AI 모델 제공사</label>
+                                <select id="aiProviderSelect" class="select-input">
+                                    <option value="gemini">Google Gemini (권장)</option>
+                                    <option value="openai">OpenAI GPT</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group" id="geminiKeyGroup">
+                                <label for="geminiKeyInput">Gemini API 키</label>
+                                <input type="password" id="geminiKeyInput" class="text-input" placeholder="Gemini 키 입력">
+                            </div>
+
+                            <div class="form-group" id="openaiKeyGroup">
+                                <label for="openaiKeyInput">OpenAI API 키</label>
+                                <input type="password" id="openaiKeyInput" class="text-input" placeholder="OpenAI 키 입력">
+                            </div>
+
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="bybitKeyInput">Bybit API 키</label>
+                                    <input type="password" id="bybitKeyInput" class="text-input" placeholder="Bybit 키 입력">
+                                </div>
+                                <div class="form-group">
+                                    <label for="bybitSecretInput">Bybit 시크릿</label>
+                                    <input type="password" id="bybitSecretInput" class="text-input" placeholder="Bybit 시크릿 입력">
+                                </div>
+                            </div>
+
+                            <button type="submit" id="saveSettingsBtn" class="btn btn-primary btn-block">
+                                <i class="fa-solid fa-save"></i> 설정 저장
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Backtesting Card -->
+                <div class="dashboard-card" id="cardBacktest">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-flask"></i> 과거 데이터 백테스트</h3>
+                    </div>
+                    <div class="card-body">
+                        <form id="backtestForm" class="settings-form">
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="backtestSymbolSelect">심볼 (다중 선택)</label>
+                                    <select id="backtestSymbolSelect" class="select-input" multiple size="4">
+                                        <option value="WLDUSDT" selected>WLDUSDT</option>
+                                        <option value="FETUSDT">FETUSDT</option>
+                                        <option value="NEARUSDT">NEARUSDT</option>
+                                        <option value="RENDERUSDT">RENDERUSDT</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="backtestStrategySelect">전략 (다중 선택)</label>
+                                    <select id="backtestStrategySelect" class="select-input" multiple size="4">
+                                        <option value="trend_following" selected>추세 추종 (퀀트)</option>
+                                        <option value="mean_reversion">평균 회귀 (볼린저밴드 + RSI)</option>
+                                        <option value="volatility_breakout">변동성 돌파 (채널 + 거래량)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="backtestIntervalSelect">주기</label>
+                                    <select id="backtestIntervalSelect" class="select-input">
+                                        <option value="5m">5분</option>
+                                        <option value="15m">15분</option>
+                                        <option value="30m">30분</option>
+                                        <option value="1h">1시간</option>
+                                        <option value="4h">4시간</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="backtestCandlesInput">캔들 수 (51–5000)</label>
+                                    <input type="number" id="backtestCandlesInput" class="number-input" min="51" max="5000" placeholder="500">
+                                </div>
+                            </div>
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="backtestBalanceInput">초기 자본금 (USDT)</label>
+                                    <input type="number" id="backtestBalanceInput" class="number-input" min="1" step="any" placeholder="10000">
+                                </div>
+                                <div class="form-group">
+                                    <label for="backtestFeeInput">수수료율 (편도)</label>
+                                    <input type="number" id="backtestFeeInput" class="number-input" min="0" max="0.01" step="0.0001" placeholder="0.0006">
+                                </div>
+                            </div>
+                            <div class="form-group-row">
+                                <div class="form-group">
+                                    <label for="backtestSplitInput">아웃오브샘플 분할 (0–1, 선택)</label>
+                                    <input type="number" id="backtestSplitInput" class="number-input" min="0.05" max="0.95" step="0.05" placeholder="예: 0.7 — 단일 조합만">
+                                </div>
+                                <div class="form-group"></div>
+                            </div>
+                            <button type="submit" id="runBacktestBtn" class="btn btn-emerald btn-block">
+                                <i class="fa-solid fa-play"></i> 백테스트 실행
+                            </button>
+                        </form>
+
+                        <div id="backtestResult" class="backtest-result-panel" style="display: none;">
+                            <table id="backtestTable" class="backtest-table">
+                                <thead>
+                                    <tr>
+                                        <th>심볼</th>
+                                        <th>전략</th>
+                                        <th>수익률</th>
+                                        <th>최대낙폭</th>
+                                        <th>승률</th>
+                                        <th>손익비</th>
+                                        <th>샤프</th>
+                                        <th>거래수</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="backtestTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs & History Card -->
+                <div class="dashboard-card" id="cardSystemLogs">
+                    <div class="card-header">
+                        <h3><i class="fa-solid fa-terminal"></i> AI 분석 및 활동 로그</h3>
+                    </div>
+                    <div class="card-body log-body">
+                        <div id="logConsole" class="log-console">
+                            <div class="log-row info">시스템 초기화 완료. WebSocket 연결을 기다리는 중...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <footer class="dashboard-footer">
+        <span class="footer-copyright">&copy; 2026 ANTIGRAVITY Bot. 전문 핀테크 트레이딩을 위해 설계됨.</span>
+    </footer>
+
+    <!-- Custom JS -->
+    <script src="app.js"></script>
+</body>
+</html>

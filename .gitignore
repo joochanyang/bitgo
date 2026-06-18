@@ -1,0 +1,18 @@
+# Secrets & runtime state — NEVER commit (API keys / live balances / trade history)
+config.json
+.env
+.env.local
+logs.json
+trades.json
+
+# Build artifacts
+/gobot
+/gobot-*
+*.exe
+*.out
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
