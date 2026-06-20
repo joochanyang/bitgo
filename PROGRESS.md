@@ -7,6 +7,17 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
+### ✅ [파라미터 최적화] 변동성돌파 그리드 스윕 도구 추가 — 완료 (2026-06-21, TDD + 라이브검증)
+
+**사용자 요청**: "파라미터 최적화". 결정: **CLI 스윕 스크립트 + 그리드 스캔 + OOS 검증**. 결과 보고 후 **기본값 유지로 확정**(코드값 미변경).
+- **전략 파라미터화**(외과적, 동작 불변): `VolatilityBreakout`에 `lookback·rewardRisk·atrK` 인스턴스 필드 추가. `NewVolatilityBreakout()`은 기존 기본값(20/2.0/1.5) 위임 → **라이브·백테스트 동작 100% 불변**. 신규 `NewVolatilityBreakoutWithParams(lb,rr,k)`(비양수→기본값 폴백)로만 스윕. `Evaluate`가 인스턴스 필드 사용, minHistory=`lookback+15`(기본 35 보존).
+- **atrK 스코프 격리**: `sizing.go`에 `atrStopLossPctK(atr,price,k)` 추가, 기존 `atrStopLossPct`는 기본 atrK 위임. → **trend/mean_reversion 공유 상수 안 건드림**(이 둘 동작 불변).
+- **신규 `cmd/optimize`**: 라이브 Bybit 4h 데이터(`NewBybitExchange("","",false)`=공개 kline, 무인증) 그리드 스윕 + 기존 `RunBacktestSplit`(70/30 OOS) 재사용 → **백테스터·라이브·config 안 건드림(읽기전용)**. 심볼당 1회 fetch 후 조합 재사용. OOS 통과 심볼수 우선→avgOOS% 순 랭킹. flags: `-symbols -interval -candles -lookbacks -rr -atrk -risk -leverage -top`.
+- **🔑 라이브 스윕 결과**(WLD·NEAR·RENDER, 4h, 1000캔들, 60조합, risk 1%): **현재 기본값(20/2.0/1.5)=60중 4위**(3/3 OOS통과, avgOOS+5.62% PF1.94). 1위(10/2.5/1.5, +6.51%)와 격차 ~0.9pp且 1위 우위는 RENDER 단일심볼 얇은 11거래 스파이크 의존 → **그리드가 교체 정당화 안 함, 기본값 유지가 맞음**. ⚠️OOS 절대수치(~+5%)가 헤드라인(+35.9%)보다 작은 건 risk 1%(드라이런 config)+최근 30%구간(~50일)만 측정해서 — 상대랭킹이 핵심, funding/슬리피지 여전히 미반영.
+- **검증**: gofmt 클린·`go build`·`go vet`·**전 패키지 `-race` green**(신규 4테스트: WithParams 기본값일치·비양수폴백·R:R→TP변화·atrK→SL변화) + 라이브 스윕 E2E 실행(3심볼 1000캔들 fetch→60조합 OOS 랭킹 출력).
+- **재실행법**: `cd ~/Desktop/go && go run ./cmd/optimize -symbols WLDUSDT,NEARUSDT,RENDERUSDT -interval 4h`. 다른 그리드는 `-lookbacks 10,20,30 -rr 1.5,2,2.5 -atrk 1,1.5,2`. 향후 더 넓은 전수/walk-forward 원하면 이 도구 확장.
+
+
 ### ✅ [git 초기화 + 첫 푸시] 이제 일반 커밋/푸시 가능 (2026-06-19)
 
 **프로젝트가 처음으로 git 레포가 됨**(이전 모든 세션 "git 아님·remote 미설정·미커밋"은 해소). `git init`→`.gitignore`→첫 커밋(48파일, `e050f02`)→`origin=https://github.com/joochanyang/bitgo`(joochanyang 계정)→`main` 푸시 완료. 로컬=원격 동기화.

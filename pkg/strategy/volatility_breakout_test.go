@@ -207,3 +207,73 @@ func TestVolatilityBreakoutName(t *testing.T) {
 		t.Errorf("Name = %q, want volatility_breakout", got)
 	}
 }
+
+// TestVolatilityBreakoutWithParamsDefaultsMatch asserts the parameterized
+// constructor with the default values produces the same fields as the plain
+// constructor — i.e. live/backtest behavior is unchanged.
+func TestVolatilityBreakoutWithParamsDefaultsMatch(t *testing.T) {
+	def := NewVolatilityBreakout()
+	if def.lookback != breakoutLookback || def.rewardRisk != breakoutRewardRisk || def.atrK != atrK {
+		t.Fatalf("default ctor = {lb:%d rr:%.2f k:%.2f}, want {%d %.2f %.2f}",
+			def.lookback, def.rewardRisk, def.atrK, breakoutLookback, breakoutRewardRisk, atrK)
+	}
+	p := NewVolatilityBreakoutWithParams(breakoutLookback, breakoutRewardRisk, atrK)
+	if *p != *def {
+		t.Errorf("WithParams(defaults) = %+v, want %+v", *p, *def)
+	}
+}
+
+// TestVolatilityBreakoutWithParamsNonPositiveFallback verifies a degenerate combo
+// falls back to defaults rather than producing a zero-window strategy.
+func TestVolatilityBreakoutWithParamsNonPositiveFallback(t *testing.T) {
+	p := NewVolatilityBreakoutWithParams(0, 0, 0)
+	if p.lookback != breakoutLookback || p.rewardRisk != breakoutRewardRisk || p.atrK != atrK {
+		t.Errorf("non-positive params = %+v, want defaults", *p)
+	}
+}
+
+// TestVolatilityBreakoutRewardRiskAffectsTP confirms the reward:risk parameter
+// actually changes the take-profit (TP = SL * rewardRisk) while SL is unchanged.
+func TestVolatilityBreakoutRewardRiskAffectsTP(t *testing.T) {
+	candles := makeOHLCCandles(rampCloses(), 2.0)
+	base := NewVolatilityBreakout()
+	wide := NewVolatilityBreakoutWithParams(breakoutLookback, 3.0, atrK)
+
+	bd, err := base.Evaluate("WLDUSDT", candles)
+	if err != nil {
+		t.Fatalf("base Evaluate: %v", err)
+	}
+	wd, err := wide.Evaluate("WLDUSDT", candles)
+	if err != nil {
+		t.Fatalf("wide Evaluate: %v", err)
+	}
+	if !approx(bd.StopLossPct, wd.StopLossPct, 1e-9) {
+		t.Errorf("SL changed across reward:risk: %v vs %v (should be equal)", bd.StopLossPct, wd.StopLossPct)
+	}
+	if !approx(wd.TakeProfitPct, wd.StopLossPct*3.0, 1e-9) {
+		t.Errorf("TP = %v, want SL*3.0 = %v", wd.TakeProfitPct, wd.StopLossPct*3.0)
+	}
+	if approx(bd.TakeProfitPct, wd.TakeProfitPct, 1e-9) {
+		t.Errorf("TP did not change with reward:risk (%v vs %v)", bd.TakeProfitPct, wd.TakeProfitPct)
+	}
+}
+
+// TestVolatilityBreakoutAtrKAffectsSL confirms a larger ATR multiplier widens the
+// stop-loss percent (when not clamped).
+func TestVolatilityBreakoutAtrKAffectsSL(t *testing.T) {
+	candles := makeOHLCCandles(rampCloses(), 2.0)
+	narrow := NewVolatilityBreakoutWithParams(breakoutLookback, breakoutRewardRisk, 1.0)
+	wide := NewVolatilityBreakoutWithParams(breakoutLookback, breakoutRewardRisk, 2.5)
+
+	nd, err := narrow.Evaluate("WLDUSDT", candles)
+	if err != nil {
+		t.Fatalf("narrow Evaluate: %v", err)
+	}
+	wd, err := wide.Evaluate("WLDUSDT", candles)
+	if err != nil {
+		t.Fatalf("wide Evaluate: %v", err)
+	}
+	if wd.StopLossPct <= nd.StopLossPct {
+		t.Errorf("larger atrK should widen SL: narrow=%v wide=%v", nd.StopLossPct, wd.StopLossPct)
+	}
+}

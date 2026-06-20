@@ -10,14 +10,20 @@ const (
 	maxStopLossPct = 10.0 // ceiling: avoids an ATR stop eating the whole risk budget over too wide a band
 )
 
-// atrStopLossPct converts an ATR value into a stop-loss percent of price,
-// clamped to [minStopLossPct, maxStopLossPct]. A zero ATR (flat candles) clamps
-// to the floor so risk-based sizing can never divide by zero.
+// atrStopLossPct converts an ATR value into a stop-loss percent of price using
+// the default atrK multiplier, clamped to [minStopLossPct, maxStopLossPct].
 func atrStopLossPct(atr, price float64) float64 {
+	return atrStopLossPctK(atr, price, atrK)
+}
+
+// atrStopLossPctK is atrStopLossPct with a caller-supplied ATR multiplier k, so a
+// strategy can tune its stop width without affecting the others. A zero ATR (flat
+// candles) clamps to the floor so risk-based sizing can never divide by zero.
+func atrStopLossPctK(atr, price, k float64) float64 {
 	if price <= 0 {
 		return maxStopLossPct
 	}
-	pct := (atrK * atr / price) * 100.0
+	pct := (k * atr / price) * 100.0
 	if pct < minStopLossPct {
 		return minStopLossPct
 	}

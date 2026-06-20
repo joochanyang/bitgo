@@ -19,11 +19,35 @@ const (
 // a close above the prior N-bar high goes LONG, a close below the prior N-bar low
 // goes SHORT, each confirmed by above-average volume. Stop/target reuse the shared
 // ATR sizing so position sizing stays consistent with the other strategies.
-type VolatilityBreakout struct{}
+//
+// The three tunable parameters live on the instance so a parameter sweep can vary
+// them without touching the other strategies' shared constants. NewVolatilityBreakout
+// uses the defaults, preserving the live/backtest behavior exactly.
+type VolatilityBreakout struct {
+	lookback   int     // rolling window for the high/low channel
+	rewardRisk float64 // take-profit = stop-loss * this ratio
+	atrK       float64 // stop-loss distance = atrK * ATR
+}
 
-// NewVolatilityBreakout creates a new instance of the VolatilityBreakout strategy.
+// NewVolatilityBreakout creates a VolatilityBreakout with the default parameters.
 func NewVolatilityBreakout() *VolatilityBreakout {
-	return &VolatilityBreakout{}
+	return NewVolatilityBreakoutWithParams(breakoutLookback, breakoutRewardRisk, atrK)
+}
+
+// NewVolatilityBreakoutWithParams creates a VolatilityBreakout with explicit tuning
+// parameters (used by the parameter sweep). Non-positive values fall back to the
+// corresponding default so a bad combo can't produce a degenerate strategy.
+func NewVolatilityBreakoutWithParams(lookback int, rewardRisk, atrMultiplier float64) *VolatilityBreakout {
+	if lookback <= 0 {
+		lookback = breakoutLookback
+	}
+	if rewardRisk <= 0 {
+		rewardRisk = breakoutRewardRisk
+	}
+	if atrMultiplier <= 0 {
+		atrMultiplier = atrK
+	}
+	return &VolatilityBreakout{lookback: lookback, rewardRisk: rewardRisk, atrK: atrMultiplier}
 }
 
 // Name returns the strategy identifier.
@@ -69,11 +93,17 @@ func avgVolume(candles []exchange.Candle, lookback, idx int) float64 {
 // Evaluate analyzes candles to make a trading decision.
 func (s *VolatilityBreakout) Evaluate(symbol string, candles []exchange.Candle) (*Decision, error) {
 	n := len(candles)
-	if n < breakoutMinHistory {
+	// Need the channel lookback plus ATR warmup headroom (matches the default
+	// breakoutMinHistory of 35 at lookback 20).
+	minHistory := s.lookback + 15
+	if minHistory < breakoutMinHistory {
+		minHistory = breakoutMinHistory
+	}
+	if n < minHistory {
 		return &Decision{
 			Decision:  HOLD,
 			Leverage:  1,
-			Reasoning: fmt.Sprintf("Insufficient historical data for %s: got %d, need at least %d candles", symbol, n, breakoutMinHistory),
+			Reasoning: fmt.Sprintf("Insufficient historical data for %s: got %d, need at least %d candles", symbol, n, minHistory),
 		}, nil
 	}
 
@@ -85,12 +115,12 @@ func (s *VolatilityBreakout) Evaluate(symbol string, candles []exchange.Candle) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate ATR: %v", err)
 	}
-	stopLoss := atrStopLossPct(atr[latest], currPrice)
-	takeProfit := stopLoss * breakoutRewardRisk
+	stopLoss := atrStopLossPctK(atr[latest], currPrice, s.atrK)
+	takeProfit := stopLoss * s.rewardRisk
 
-	upperChannel := rollingHigh(candles, breakoutLookback, latest)
-	lowerChannel := rollingLow(candles, breakoutLookback, latest)
-	avgVol := avgVolume(candles, breakoutLookback, latest)
+	upperChannel := rollingHigh(candles, s.lookback, latest)
+	lowerChannel := rollingLow(candles, s.lookback, latest)
+	avgVol := avgVolume(candles, s.lookback, latest)
 	currVol := candles[latest].Volume
 
 	// Volume confirmation: the breakout bar must trade on at least average volume.
@@ -108,20 +138,20 @@ func (s *VolatilityBreakout) Evaluate(symbol string, candles []exchange.Candle) 
 			decision = LONG
 			confidence = 0.8
 			reason = fmt.Sprintf("Close (%.4f) broke above %d-bar high (%.4f) on volume %.0f (avg %.0f). Bullish breakout.",
-				currPrice, breakoutLookback, upperChannel, currVol, avgVol)
+				currPrice, s.lookback, upperChannel, currVol, avgVol)
 		} else {
 			reason = fmt.Sprintf("Close (%.4f) broke above %d-bar high (%.4f) but volume %.0f < avg %.0f. Unconfirmed.",
-				currPrice, breakoutLookback, upperChannel, currVol, avgVol)
+				currPrice, s.lookback, upperChannel, currVol, avgVol)
 		}
 	} else if currPrice < lowerChannel {
 		if volumeConfirmed {
 			decision = SHORT
 			confidence = 0.8
 			reason = fmt.Sprintf("Close (%.4f) broke below %d-bar low (%.4f) on volume %.0f (avg %.0f). Bearish breakdown.",
-				currPrice, breakoutLookback, lowerChannel, currVol, avgVol)
+				currPrice, s.lookback, lowerChannel, currVol, avgVol)
 		} else {
 			reason = fmt.Sprintf("Close (%.4f) broke below %d-bar low (%.4f) but volume %.0f < avg %.0f. Unconfirmed.",
-				currPrice, breakoutLookback, lowerChannel, currVol, avgVol)
+				currPrice, s.lookback, lowerChannel, currVol, avgVol)
 		}
 	}
 
