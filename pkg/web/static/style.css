@@ -178,8 +178,17 @@ body {
 /* KPI rail */
 .metrics-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 14px;
+}
+.metric-scope {
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: var(--t-faint);
+    letter-spacing: 0;
+    text-transform: none;
+    margin-left: 6px;
 }
 .metric-card {
     background: var(--ink-800);
@@ -223,6 +232,9 @@ body {
 .text-rose { color: var(--down) !important; }
 .text-slate { color: var(--t-mid); }
 .text-blue { color: var(--info); }
+.text-warn { color: var(--warn) !important; }
+.text-faint { color: var(--t-faint) !important; }
+.text-lo { color: var(--t-lo) !important; }
 /* legacy icon-bg helpers kept harmless */
 .bg-emerald-light, .bg-slate-light, .bg-blue-light { background: var(--ink-700); }
 
@@ -424,6 +436,89 @@ select[multiple].select-input option { padding: 5px 4px; }
 .dashboard-content > *:nth-child(3) { animation-delay: .14s; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ---------- Countdown badge (header) ---------- */
+.countdown-badge {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--font-mono);
+    font-size: 0.72rem; font-weight: 500;
+    color: var(--accent);
+    padding: 6px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(45,212,167,0.25);
+    background: var(--accent-soft);
+    letter-spacing: 0.01em;
+}
+.countdown-badge i { font-size: 0.7rem; }
+
+/* ---------- Live ribbon + header tint ---------- */
+.live-ribbon {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    background: rgba(244,86,107,0.10);
+    border-bottom: 1px solid rgba(244,86,107,0.28);
+    color: var(--down);
+    font-size: 0.78rem; font-weight: 600; letter-spacing: 0.01em;
+    padding: 7px 28px;
+}
+.live-ribbon i { font-size: 0.85rem; }
+.glass-header.live-header { border-bottom-color: rgba(244,86,107,0.4); }
+.glass-header.live-header .logo-icon { background: var(--down); }
+
+/* ---------- Position extras: SL/TP row + count chip ---------- */
+.count-chip {
+    font-family: var(--font-mono); font-size: 0.7rem; font-weight: 600;
+    color: var(--t-lo);
+    background: var(--ink-700);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 10px;
+}
+.sl-tp-grid .detail-val { font-size: 0.82rem; }
+.sl-tp-grid { background: var(--ink-800); border-radius: 6px; padding: 11px 12px !important; margin: 0 0 13px; border: 1px solid var(--line); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
+/* ---------- Situation: decision chip + reasoning ---------- */
+.situation-chip-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.sit-sym { font-family: var(--font-mono); font-size: 0.72rem; color: var(--t-lo); }
+.decision-chip {
+    font-family: var(--font-ui); font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 5px;
+    border: 1px solid var(--line-strong);
+    color: var(--t-mid); background: var(--ink-750);
+}
+.decision-chip.dec-long { color: var(--up); border-color: rgba(52,211,153,0.35); background: rgba(52,211,153,0.10); }
+.decision-chip.dec-short { color: var(--down); border-color: rgba(244,86,107,0.35); background: rgba(244,86,107,0.10); }
+.decision-chip.dec-close { color: var(--warn); border-color: rgba(224,166,74,0.35); background: rgba(224,166,74,0.10); }
+.decision-chip.dec-hold { color: var(--t-lo); }
+.situation-reason {
+    margin-top: 9px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,0.05);
+    font-family: var(--font-mono); font-size: 0.74rem; color: var(--t-lo); line-height: 1.6;
+    white-space: pre-wrap;
+}
+
+/* ---------- Segmented control (trade scope) ---------- */
+.seg-control {
+    display: inline-flex; background: var(--ink-850);
+    border: 1px solid var(--line); border-radius: 7px; overflow: hidden;
+}
+.seg-btn {
+    font-family: var(--font-ui); font-size: 0.72rem; font-weight: 600;
+    color: var(--t-lo); background: transparent; border: none;
+    padding: 6px 12px; cursor: pointer; transition: background .15s ease, color .15s ease;
+}
+.seg-btn:hover { color: var(--t-mid); }
+.seg-btn.active { background: var(--ink-700); color: var(--t-hi); }
+
+/* ---------- Trade history table ---------- */
+.trade-table-wrap { max-height: 320px; overflow-y: auto; }
+.trade-table { width: 100%; }
+.trade-table thead th { position: sticky; top: 0; z-index: 1; }
+.trade-table tbody td { text-align: left; }
+.trade-table tbody td:nth-child(4),
+.trade-table tbody td:nth-child(5),
+.trade-table tbody td:nth-child(6),
+.trade-table tbody td:nth-child(7) { text-align: right; }
+.no-data-td { text-align: center !important; color: var(--t-lo); padding: 22px 12px !important; }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1040px) {
     .workspace-grid { grid-template-columns: 1fr; }
@@ -433,4 +528,5 @@ select[multiple].select-input option { padding: 5px 4px; }
     .metrics-grid { grid-template-columns: 1fr; }
     .form-group-row { grid-template-columns: 1fr; }
     .header-container, .dashboard-content { padding-left: 16px; padding-right: 16px; }
+    .countdown-badge { display: none !important; }
 }

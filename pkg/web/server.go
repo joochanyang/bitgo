@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"go-bot/pkg/backtest"
@@ -94,6 +95,7 @@ type WebServer struct {
 	strategies   map[string]strategy.Strategy           // Strategy engines map
 	situations   func() map[string]bot.SymbolStatus     // Optional: per-symbol plain-Korean status (nil = none)
 	explain      func() (string, error)                 // Optional: on-demand AI narration (nil = disabled)
+	nextTickAt   func() time.Time                       // Optional: next scheduled tick (zero time when stopped)
 	authToken    string                                 // If set, required on /api/* and /ws (DASHBOARD_TOKEN)
 }
 
@@ -107,6 +109,13 @@ func (ws *WebServer) SetSituationProvider(fn func() map[string]bot.SymbolStatus)
 // Optional: when unset, the endpoint reports that AI explanation is unavailable.
 func (ws *WebServer) SetExplainProvider(fn func() (string, error)) {
 	ws.explain = fn
+}
+
+// SetNextTickProvider wires the engine's next-scheduled-tick time so the dashboard
+// can render a "다음 분석까지 N분 남음" countdown. Optional: when unset, the countdown
+// is omitted.
+func (ws *WebServer) SetNextTickProvider(fn func() time.Time) {
+	ws.nextTickAt = fn
 }
 
 // authorized reports whether a request carries the configured auth token.
@@ -278,6 +287,10 @@ type SystemState struct {
 	// Situations: per-symbol plain-Korean status for the dashboard's "current situation"
 	// card. Omitted when no provider is wired (e.g. in unit tests).
 	Situations map[string]bot.SymbolStatus `json:"situations,omitempty"`
+	// NextTickAt: ISO-8601 wall-clock time of the next scheduled tick. Empty when the
+	// engine is stopped. Drives the dashboard countdown so a quiet running bot reads as
+	// "waiting" rather than "broken".
+	NextTickAt string `json:"next_tick_at,omitempty"`
 }
 
 func (ws *WebServer) getSystemStateJSON() ([]byte, error) {
@@ -339,6 +352,11 @@ func (ws *WebServer) getSystemStateJSON() ([]byte, error) {
 	}
 	if ws.situations != nil {
 		state.Situations = ws.situations()
+	}
+	if ws.nextTickAt != nil {
+		if t := ws.nextTickAt(); !t.IsZero() {
+			state.NextTickAt = t.Format(time.RFC3339)
+		}
 	}
 
 	return json.Marshal(state)

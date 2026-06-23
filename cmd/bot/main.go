@@ -102,14 +102,24 @@ func main() {
 	setPaperModeCb := func(isPaper bool) {
 		if isPaper {
 			engine.SetExchange(mockEx)
-		} else {
-			if liveEx == nil {
-				// Initialize live client if credentials were entered dynamically via the UI.
-				live := config.GetConfig()
-				liveEx = exchange.NewBybitExchange(live.BybitAPIKey, live.BybitAPISecret, false)
-			}
-			engine.SetExchange(liveEx)
+			return
 		}
+		// Live mode: lazily initialize the live client if credentials were entered
+		// dynamically via the UI. Refuse the switch when keys are still missing so
+		// we never install a BybitExchange built from empty credentials (its REST
+		// calls would fail on every tick with confusing auth errors).
+		if liveEx == nil {
+			live := config.GetConfig()
+			if live.BybitAPIKey == "" || live.BybitAPISecret == "" {
+				db.LogError("Live 전환 불가: Bybit API 키가 설정되지 않았습니다. Paper 모드를 유지합니다. " +
+					"대시보드 또는 .env에 bybit_api_key/bybit_api_secret(또는 BYBIT_API_KEY/BYBIT_API_SECRET)를 입력하세요.")
+				engine.SetExchange(mockEx)
+				return
+			}
+			liveEx = exchange.NewBybitExchange(live.BybitAPIKey, live.BybitAPISecret, false)
+			db.LogInfo("Real Bybit Exchange client initialized (live switch).")
+		}
+		engine.SetExchange(liveEx)
 	}
 
 	closePosCb := func(symbol string) error {
@@ -120,6 +130,10 @@ func main() {
 
 	// Surface the engine's per-symbol plain-Korean status to the dashboard's situation card.
 	webServer.SetSituationProvider(engine.MarketViews)
+
+	// Surface the next scheduled tick so the dashboard can show a "waiting for next
+	// analysis" countdown while the engine runs quietly between ticks.
+	webServer.SetNextTickProvider(engine.NextTickAt)
 
 	// On-demand AI narration: build a compact prompt from the latest per-symbol snapshot
 	// and ask the LLM to explain it in plain Korean. Reuses the configured AI provider/key.

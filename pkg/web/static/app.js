@@ -6,6 +6,8 @@ let currentSymbol = "WLDUSDT";
 let reconnectInterval = 3000;
 let systemState = {};
 let priceLines = []; // chart price lines for the open position (entry/SL/TP), cleared each refresh
+let tradeScope = "all"; // trade history filter: all | open | closed
+let countdownTimer = null; // interval driving the next-tick countdown
 
 // --- Auth token (only needed when the server sets DASHBOARD_TOKEN) ---
 // Provide it once via ?token=... in the URL; it is remembered in localStorage.
@@ -286,8 +288,8 @@ function updateUI() {
 
     // 1. Balance & Realized PnL
     document.getElementById("balanceVal").innerText = `${systemState.balance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
-    
-    // Calculate total realized profit from closed trades
+
+    // Calculate total realized profit from closed trades (cumulative across all history).
     let totalRealized = 0;
     let wins = 0;
     let closedTradesCount = 0;
@@ -307,6 +309,7 @@ function updateUI() {
     const realizedVal = document.getElementById("realizedPnLVal");
     realizedVal.innerText = `${totalRealized >= 0 ? '+' : ''}${totalRealized.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
     realizedVal.className = totalRealized >= 0 ? "metric-value text-emerald" : "metric-value text-rose";
+    document.getElementById("realizedScope").textContent = "누적";
 
     // Win Rate
     const winRateVal = document.getElementById("winRateVal");
@@ -316,56 +319,34 @@ function updateUI() {
     } else {
         winRateVal.innerText = "0.0%";
     }
+    document.getElementById("winRateScope").textContent = `${closedTradesCount}건`;
 
     // 2. Active Positions & Unrealized PnL
     let totalUnrealized = 0;
+    let totalRiskExposure = 0; // sum of at-stop loss across open positions (USDT)
     const posListContainer = document.getElementById("positionList");
-    posListContainer.innerHTML = "";
+    posListContainer.replaceChildren();
 
-    if (systemState.positions && systemState.positions.length > 0) {
-        systemState.positions.forEach(pos => {
+    const positions = systemState.positions || [];
+    document.getElementById("positionCount").textContent = String(positions.length);
+
+    if (positions.length > 0) {
+        positions.forEach(pos => {
             totalUnrealized += pos.unrealized_pnl;
-            
-            const isLong = pos.side === "LONG";
-            const pnlPercent = (pos.unrealized_pnl / (pos.entry_price * pos.size)) * 100 * pos.leverage;
 
-            const posItem = document.createElement("div");
-            posItem.className = "position-item";
-            posItem.innerHTML = `
-                <div class="pos-main-info">
-                    <div class="pos-title-block">
-                        <span class="pos-symbol">${pos.symbol}</span>
-                        <span class="pos-side ${isLong ? 'long' : 'short'}">${pos.side} ${pos.leverage}x</span>
-                        <span class="pos-size">수량: ${pos.size.toFixed(3)}</span>
-                    </div>
-                    <div class="pos-pnl">
-                        <div class="pnl-amount ${pos.unrealized_pnl >= 0 ? 'text-emerald' : 'text-rose'}">
-                            ${pos.unrealized_pnl >= 0 ? '+' : ''}${pos.unrealized_pnl.toFixed(2)} USDT
-                        </div>
-                        <div class="pnl-pct ${pos.unrealized_pnl >= 0 ? 'text-emerald' : 'text-rose'}">
-                            ${pos.unrealized_pnl >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%
-                        </div>
-                    </div>
-                </div>
-                <div class="pos-details-grid">
-                    <div class="detail-item">
-                        <span class="detail-label">진입가</span>
-                        <span class="detail-val">${pos.entry_price.toFixed(4)}</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="detail-label">마크가</span>
-                        <span class="detail-val">${pos.mark_price.toFixed(4)}</span>
-                    </div>
-                    <div class="detail-item">
-                        <span class="detail-label">증거금</span>
-                        <span class="detail-val">${((pos.entry_price * pos.size) / pos.leverage).toFixed(2)} USDT</span>
-                    </div>
-                </div>
-                <button onclick="closePosition('${pos.symbol}')" class="btn btn-danger btn-sm btn-block">
-                    <i class="fa-solid fa-square-xmark"></i> 시장가 청산
-                </button>
-            `;
-            posListContainer.appendChild(posItem);
+            const isLong = pos.side === "LONG";
+            const notional = pos.entry_price * pos.size;
+            const margin = pos.leverage > 0 ? notional / pos.leverage : notional;
+            // PnL as % of margin (the capital actually locked). unrealized_pnl is already
+            // the leveraged absolute P&L from the exchange, so we divide by margin once —
+            // never multiply by leverage again (that double-counts it).
+            const pnlPercent = margin > 0 ? (pos.unrealized_pnl / margin) * 100 : 0;
+            // At-stop loss: what we'd lose (USDT) if the position hits its stop.
+            const slDist = Math.abs(pos.entry_price - (pos.stop_loss_price || 0));
+            const riskAtStop = pos.stop_loss_price > 0 ? pos.size * slDist : 0;
+            totalRiskExposure += riskAtStop;
+
+            posListContainer.appendChild(buildPositionItem(pos, isLong, margin, pnlPercent, riskAtStop));
         });
     } else {
         const noData = document.createElement("div");
@@ -378,9 +359,20 @@ function updateUI() {
     unrealizedVal.innerText = `${totalUnrealized >= 0 ? '+' : ''}${totalUnrealized.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USDT`;
     unrealizedVal.className = totalUnrealized >= 0 ? "metric-value text-emerald" : "metric-value text-rose";
 
-    // 3. Engine Running Button / Badge
+    // Risk exposure KPI: at-stop loss across open positions vs the portfolio risk budget.
+    const riskVal = document.getElementById("riskExposureVal");
+    riskVal.innerText = `${totalRiskExposure.toFixed(2)} USDT`;
+    const maxPortfolioRisk = (systemState.config && systemState.config.max_portfolio_risk_pct) || 10;
+    const riskBudget = (systemState.balance || 0) * (maxPortfolioRisk / 100);
+    const riskPctOfBudget = riskBudget > 0 ? (totalRiskExposure / riskBudget) * 100 : 0;
+    document.getElementById("riskScope").textContent = `/ 예산 ${maxPortfolioRisk}% = ${riskBudget.toFixed(0)}USDT`;
+    riskVal.className = riskPctOfBudget > 80 ? "metric-value text-rose" : (riskPctOfBudget > 0 ? "metric-value text-warn" : "metric-value");
+
+    // 3. Engine Running Button / Badge + Live ribbon + header tint
     const toggleBtn = document.getElementById("toggleBotBtn");
     const modeBadge = document.getElementById("modeBadge");
+    const liveRibbon = document.getElementById("liveRibbon");
+    const appHeader = document.getElementById("appHeader");
 
     if (systemState.is_running) {
         setBtnLabel(toggleBtn, "fa-pause", "봇 정지");
@@ -393,10 +385,20 @@ function updateUI() {
     if (systemState.is_paper_trading) {
         modeBadge.className = "mode-badge paper";
         modeBadge.innerText = "모의 매매";
+        liveRibbon.style.display = "none";
+        appHeader.classList.remove("live-header");
     } else {
         modeBadge.className = "mode-badge live";
         modeBadge.innerText = "실전 매매";
+        liveRibbon.style.display = "flex";
+        appHeader.classList.add("live-header");
     }
+
+    // Next-tick countdown (driven by systemState.next_tick_at, RFC3339).
+    updateCountdown(systemState.is_running, systemState.next_tick_at);
+
+    // 3b. Trade history table (renders backend trades, filtered by tradeScope).
+    renderTradeTable();
 
     // 4. Fill Config Settings Form (only once, to prevent overwriting user input while they type)
     const settingsForm = document.getElementById("settingsForm");
@@ -460,8 +462,25 @@ function renderSituations() {
 
     keys.sort().forEach(sym => {
         const s = sits[sym].situation || {};
+        const view = sits[sym].view || {};
         const item = document.createElement("div");
         item.className = "situation-item";
+
+        // Decision chip: shows the bot's latest call (LONG/SHORT/HOLD/CLOSE) at a glance,
+        // so "봇이 지금 뭘 생각하나" is visible, not just the plain-Korean summary.
+        if (view.decision) {
+            const chipRow = document.createElement("div");
+            chipRow.className = "situation-chip-row";
+            const chip = document.createElement("span");
+            chip.className = `decision-chip dec-${(view.decision || "").toLowerCase()}`;
+            chip.textContent = decisionLabel(view.decision);
+            chipRow.appendChild(chip);
+            const symTag = document.createElement("span");
+            symTag.className = "sit-sym";
+            symTag.textContent = sym;
+            chipRow.appendChild(symTag);
+            item.appendChild(chipRow);
+        }
 
         const head = document.createElement("div");
         head.className = "situation-headline";
@@ -473,8 +492,28 @@ function renderSituations() {
         detail.textContent = s.detail || "";
         item.appendChild(detail);
 
+        // The strategy's own reasoning (English) — surfaced as-is so an advanced user can
+        // read why the signal fired, beneath the beginner-friendly Korean summary.
+        if (view.reasoning) {
+            const reason = document.createElement("div");
+            reason.className = "situation-reason";
+            reason.textContent = view.reasoning;
+            item.appendChild(reason);
+        }
+
         box.appendChild(item);
     });
+}
+
+// decisionLabel maps the internal decision token to a short Korean chip label.
+function decisionLabel(d) {
+    switch ((d || "").toUpperCase()) {
+        case "LONG": return "LONG 매수";
+        case "SHORT": return "SHORT 매도";
+        case "CLOSE": return "청산";
+        case "HOLD": return "관망";
+        default: return d || "—";
+    }
 }
 
 // --- Bind Button Actions ---
@@ -484,6 +523,16 @@ function setupEventListeners() {
     symbolSelect.addEventListener("change", (e) => {
         currentSymbol = e.target.value;
         loadChartData(currentSymbol);
+    });
+
+    // Trade history scope segmented control (전체 / 진행중 / 종료)
+    document.querySelectorAll(".seg-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+            document.querySelectorAll(".seg-btn").forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            tradeScope = btn.dataset.scope;
+            renderTradeTable();
+        });
     });
 
     // AI 해설 button — fetch a natural-language explanation on demand.
@@ -586,6 +635,17 @@ function setupEventListeners() {
     const strategySelect = document.getElementById("strategySelect");
     strategySelect.addEventListener("change", toggleStrategyVisibility);
 
+    // Live-mode guard: switching OFF paper trading is irreversible (real money). Confirm
+    // before the user can accidentally uncheck it. (Backend setPaperModeCb also refuses
+    // when keys are missing; this is the UI-side defence-in-depth.)
+    const paperCheckbox = document.getElementById("paperTradingCheckbox");
+    paperCheckbox.addEventListener("change", () => {
+        if (!paperCheckbox.checked) {
+            const ok = confirm("실전 매매로 전환합니다. 저장 시 실제 자금으로 거래가 실행됩니다.\n계속하시겠습니까?");
+            if (!ok) paperCheckbox.checked = true; // revert
+        }
+    });
+
     // AI Provider Select Visibility Toggle
     const aiProvider = document.getElementById("aiProviderSelect");
     aiProvider.addEventListener("change", toggleAPIKeyVisibility);
@@ -681,6 +741,177 @@ function setBtnLabel(btn, iconClasses, text) {
     icon.className = "fa-solid " + iconClasses;
     btn.appendChild(icon);
     btn.appendChild(document.createTextNode(" " + text));
+}
+
+// buildPositionItem constructs one position card via DOM nodes (no innerHTML), including
+// the entry/mark/margin row and the stop-loss / take-profit / at-stop-loss row that the
+// old UI was missing. pnlCls selects the emerald/rose colour by sign.
+function buildPositionItem(pos, isLong, margin, pnlPercent, riskAtStop) {
+    const item = document.createElement("div");
+    item.className = "position-item";
+
+    // Header row: symbol/side/size (left) + PnL (right)
+    const main = document.createElement("div");
+    main.className = "pos-main-info";
+
+    const title = document.createElement("div");
+    title.className = "pos-title-block";
+    const sym = document.createElement("span");
+    sym.className = "pos-symbol";
+    sym.textContent = pos.symbol;
+    const side = document.createElement("span");
+    side.className = `pos-side ${isLong ? "long" : "short"}`;
+    side.textContent = `${pos.side} ${pos.leverage}x`;
+    const size = document.createElement("span");
+    size.className = "pos-size";
+    size.textContent = `수량: ${pos.size.toFixed(3)}`;
+    title.append(sym, side, size);
+
+    const pnlBox = document.createElement("div");
+    pnlBox.className = "pos-pnl";
+    const pnlCls = pos.unrealized_pnl >= 0 ? "text-emerald" : "text-rose";
+    const amt = document.createElement("div");
+    amt.className = `pnl-amount ${pnlCls}`;
+    amt.textContent = `${pos.unrealized_pnl >= 0 ? "+" : ""}${pos.unrealized_pnl.toFixed(2)} USDT`;
+    const pct = document.createElement("div");
+    pct.className = `pnl-pct ${pnlCls}`;
+    pct.textContent = `${pos.unrealized_pnl >= 0 ? "+" : ""}${pnlPercent.toFixed(2)}% (증거금대비)`;
+    pnlBox.append(amt, pct);
+
+    main.append(title, pnlBox);
+    item.appendChild(main);
+
+    // Entry / mark / margin row
+    item.appendChild(detailGrid([
+        { label: "진입가", val: pos.entry_price.toFixed(4) },
+        { label: "마크가", val: pos.mark_price.toFixed(4) },
+        { label: "증거금", val: `${margin.toFixed(2)} USDT` },
+    ]));
+
+    // SL / TP / at-stop-loss row — the row the old UI was missing.
+    item.appendChild(detailGrid([
+        { label: "손절가", val: pos.stop_loss_price > 0 ? pos.stop_loss_price.toFixed(4) : "미설정", cls: pos.stop_loss_price > 0 ? "text-rose" : "text-faint" },
+        { label: "익절가", val: pos.take_profit_price > 0 ? pos.take_profit_price.toFixed(4) : "미설정", cls: pos.take_profit_price > 0 ? "text-emerald" : "text-faint" },
+        { label: "손절시 손실", val: riskAtStop > 0 ? `-${riskAtStop.toFixed(2)} USDT` : "—", cls: riskAtStop > 0 ? "text-rose" : "text-faint" },
+    ], "sl-tp-grid"));
+
+    // Close button
+    const btn = document.createElement("button");
+    btn.className = "btn btn-danger btn-sm btn-block";
+    const icon = document.createElement("i");
+    icon.className = "fa-solid fa-square-xmark";
+    btn.appendChild(icon);
+    btn.appendChild(document.createTextNode(" 시장가 청산"));
+    btn.addEventListener("click", () => closePosition(pos.symbol));
+    item.appendChild(btn);
+
+    return item;
+}
+
+// detailGrid builds a 3-column detail row from [{label,val,cls}].
+function detailGrid(items, extraClass) {
+    const grid = document.createElement("div");
+    grid.className = "pos-details-grid" + (extraClass ? " " + extraClass : "");
+    items.forEach(it => {
+        const cell = document.createElement("div");
+        cell.className = "detail-item";
+        const label = document.createElement("span");
+        label.className = "detail-label";
+        label.textContent = it.label;
+        const val = document.createElement("span");
+        val.className = "detail-val" + (it.cls ? " " + it.cls : "");
+        val.textContent = it.val;
+        cell.append(label, val);
+        grid.appendChild(cell);
+    });
+    return grid;
+}
+
+// renderTradeTable paints the backend trade history into the trades table, filtered by
+// the tradeScope segmented control (all / open / closed). Newest first (backend already
+// reverses). Uses DOM nodes — no innerHTML.
+function renderTradeTable() {
+    const tbody = document.getElementById("tradeTableBody");
+    if (!tbody) return;
+    tbody.replaceChildren();
+
+    let trades = systemState.trades || [];
+    if (tradeScope === "open") trades = trades.filter(t => t.status === "OPEN");
+    else if (tradeScope === "closed") trades = trades.filter(t => t.status === "CLOSED");
+
+    if (trades.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 8;
+        td.className = "no-data-td";
+        td.textContent = "거래 내역이 없습니다.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return;
+    }
+
+    trades.forEach(t => {
+        const tr = document.createElement("tr");
+        const cell = (text, cls) => {
+            const td = document.createElement("td");
+            td.textContent = text == null ? "" : String(text);
+            if (cls) td.className = cls;
+            tr.appendChild(td);
+        };
+
+        const ts = t.timestamp ? new Date(t.timestamp).toLocaleString("ko-KR", {
+            month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit"
+        }) : "—";
+        cell(ts);
+        cell(t.symbol);
+        const sideCls = (t.side === "LONG") ? "text-emerald" : (t.side === "SHORT" ? "text-rose" : "");
+        cell(t.side ? `${t.side} ${t.leverage || 0}x` : "—", sideCls);
+        cell(t.size != null ? t.size.toFixed(3) : "—");
+        cell(t.entry_price ? t.entry_price.toFixed(4) : "—");
+        cell(t.exit_price ? t.exit_price.toFixed(4) : "—");
+        if (t.status === "OPEN") {
+            cell("진행중", "text-warn");
+        } else {
+            const pnl = t.realized_pnl || 0;
+            cell(`${pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}`, pnl >= 0 ? "text-emerald" : "text-rose");
+        }
+        cell(t.status === "OPEN" ? "진행중" : "종료", t.status === "OPEN" ? "text-warn" : "text-lo");
+
+        tbody.appendChild(tr);
+    });
+}
+
+// updateCountdown shows "다음 분석까지 N분 N초" while running, or a stopped hint. It
+// re-ticks every second via countdownTimer so the value stays live between WS pushes.
+function updateCountdown(isRunning, nextTickAtISO) {
+    const badge = document.getElementById("countdownBadge");
+    const text = document.getElementById("countdownText");
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+
+    if (!isRunning || !nextTickAtISO) {
+        badge.style.display = isRunning ? "inline-flex" : "none";
+        if (isRunning) text.textContent = "다음 분석 대기 중";
+        return;
+    }
+
+    const target = new Date(nextTickAtISO).getTime();
+    const tick = () => {
+        const remain = target - Date.now();
+        if (remain <= 0) {
+            text.textContent = "분석 실행 중...";
+            return;
+        }
+        const totalMin = Math.floor(remain / 60000);
+        const h = Math.floor(totalMin / 60);
+        const m = totalMin % 60;
+        const s = Math.floor((remain % 60000) / 1000);
+        text.textContent = h > 0
+            ? `다음 분석까지 ${h}시간 ${m}분`
+            : `다음 분석까지 ${m}분 ${s}초`;
+    };
+    tick();
+    badge.style.display = "inline-flex";
+    countdownTimer = setInterval(tick, 1000);
 }
 
 // --- Render batch backtest results into the results table ---

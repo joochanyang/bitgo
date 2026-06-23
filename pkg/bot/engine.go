@@ -27,6 +27,12 @@ type Engine struct {
 	// marketViews holds the latest per-symbol snapshot the dashboard explains in plain
 	// Korean. Guarded by mu (written each tick, read by MarketViews()).
 	marketViews map[string]MarketView
+
+	// nextTickAt is the wall-clock time the scheduler will fire its next tick. The
+	// dashboard reads it via NextTickAt() to render a "다음 분석까지 N분 남음" countdown
+	// so a quiet running bot reads as "waiting" rather than "broken". Zero when stopped
+	// or before the first schedule. Guarded by mu.
+	nextTickAt time.Time
 }
 
 // NewEngine creates a new trading bot engine
@@ -100,6 +106,15 @@ func (e *Engine) MarketViews() map[string]SymbolStatus {
 	return out
 }
 
+// NextTickAt returns the wall-clock time of the next scheduled tick, or the zero
+// time when the engine is stopped (race-free read). The dashboard renders a countdown
+// from this so a running-but-quiet bot reads as "waiting" rather than "broken".
+func (e *Engine) NextTickAt() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.nextTickAt
+}
+
 // Start launches the background trading scheduler loop
 func (e *Engine) Start() {
 	e.mu.Lock()
@@ -131,6 +146,12 @@ func (e *Engine) Start() {
 	duration := e.parseInterval(cfg.Interval)
 	ticker := time.NewTicker(duration)
 
+	// Record the first scheduled tick so the dashboard can count down to it
+	// immediately after Start (the ticker fires `duration` later).
+	e.mu.Lock()
+	e.nextTickAt = time.Now().Add(duration)
+	e.mu.Unlock()
+
 	go func() {
 		for {
 			select {
@@ -142,6 +163,11 @@ func (e *Engine) Start() {
 					duration = newDuration
 					ticker.Reset(duration)
 				}
+				// Advance the next-scheduled-tick marker so the countdown stays accurate
+				// across interval changes.
+				e.mu.Lock()
+				e.nextTickAt = time.Now().Add(duration)
+				e.mu.Unlock()
 			case <-stopChan:
 				ticker.Stop()
 				return
@@ -158,6 +184,7 @@ func (e *Engine) Stop() {
 		return
 	}
 	e.IsRunning = false
+	e.nextTickAt = time.Time{} // no scheduled tick while stopped
 	close(e.stopChan)
 	db.LogInfo("Trading engine stopped/paused.")
 	if e.onTick != nil {
