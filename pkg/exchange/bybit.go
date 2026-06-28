@@ -45,10 +45,13 @@ func NewBybitExchange(apiKey, apiSecret string, isTestnet bool) *BybitExchange {
 		apiURL = "https://api-testnet.bybit.com"
 	}
 	return &BybitExchange{
-		apiKey:     apiKey,
-		apiSecret:  apiSecret,
-		apiURL:     apiURL,
-		recvWindow: "5000",
+		apiKey:    apiKey,
+		apiSecret: apiSecret,
+		apiURL:    apiURL,
+		// 15s window tolerates host clock drift (Windows w32time can lag a few
+		// seconds); a 5s window let error 10002 reject every signed request once
+		// the home server clock drifted ~4.4s ahead of Bybit's.
+		recvWindow: "15000",
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
