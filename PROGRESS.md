@@ -7,7 +7,18 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
-### ▶▶▶▶ [현재 진행] 종목 3종 확장(WLD+BTC+ETH) — 페이퍼 관찰 중, 다음=사용자 지시 대기 (2026-06-28)
+### 🔴🔴🔴 [현재 진행] 실거래 전환 완료 — LIVE 가동 중·관찰/업그레이드 단계 (2026-06-29)
+
+**사용자 지시**: "실거래로 전환해줘 + 부족/업그레이드 지속 관찰". **완료=홈서버 봇 LIVE 전환·검증**.
+
+- ✅ **실거래 전환 완료·검증**(2026-06-29 03:15): 홈서버(59.11.159.155:8090) `config.json` `is_paper_trading:false`. 로그 `LIVE TRADING active. Orders will execute on real market.` 확인·`is_running:true`·**실잔고 49.94 USDT 조회 OK**·3종 다 HOLD(채널 안). 전략=volatility_breakout·4h·WLD/BTC/ETH·risk1%·lev3. **돈 나감 상태**. next_tick 4h 주기.
+- 🔴🔴 **함정 #1 발견·수정 — PowerShell `Set-Content -Encoding UTF8`이 BOM(`EF BB BF`)을 붙임**: Go JSON 파서가 `invalid character 'ï'`로 config 전체를 **기본값 폴백**(port 8090→8080·is_paper true로 되돌아감)→8080충돌 크래시→`run_gobot.bat` 10초 재시작 무한루프. **해결=config를 SSH here-string으로 쓰지 말 것**. 반드시 **로컬 맥서 깨끗한 JSON 작성→`scp`로 전송**(BOM 0·인코딩 안전). 검증=홈서버서 첫 바이트 `7B`(=`{`)·`ConvertFrom-Json` 성공.
+- 🔴🔴 **함정 #2 발견·근본수정 — 홈서버 Windows 시계가 Bybit보다 ~4.4s 빠름** → 모든 서명요청 `bybit api error code 10002(invalid timestamp/recv_window)` 거부 → 잔고/포지션 조회·주문 전부 실패(페이퍼땐 인증 안 해서 안 드러남·**실거래 전환하자마자 터짐**). **임시조치**=`w32tm /config /manualpeerlist:"time.windows.com,0x9 time.google.com,0x9" /syncfromflags:manual /update`+`w32tm /resync`(NTP UDP123 막히면 부분효과). **근본수정**=`bybit.go` `recvWindow "5000"→"15000"`(커밋 `3d2b5e8`·푸시됨·홈서버 재배포 완료)→시계 드리프트 15s까지 흡수. 재배포 후 **timestamp 에러 0건** 확인.
+- 🟡 **운영메모 정정 — `run_gobot.bat` 자동재시작 루프는 실제로 작동함**(종전 PROGRESS "작동 안 함"은 **틀림**). 이번에 `gobot exited, restarting in 10s` 실측. 즉 `taskkill`만 하면 10초 후 부활. **완전정지=`schtasks /end /tn GoBot` + `taskkill /f /im gobot.exe`**(end로 bat 래퍼까지 끊어야 함). 단순 재기동(새 config/exe 반영)=정지 후 `schtasks /run /tn GoBot`→엔진 기본 stopped→`POST {action:start}`.
+- 🔜 **다음 = 지속 관찰·업그레이드**: ①진입 발생 시 진입가/SL/TP/명목·텔레그램 알림 확인 ②에러 로그 모니터(특히 10002 재발=시계 또 틀어짐) ③남은 개선거리: **DASHBOARD_TOKEN 미설정**(8090 외부 미개방이라 현재 무해하나 실거래니 토큰 권장)·funding/슬리피지 백테스트 미반영·실거래 OOS 데이터 0. ④실거래 재배포 절차=맥서 `GOOS=windows GOARCH=amd64 go build -o ...gobot.exe ./cmd/bot`→정지(end+taskkill)→`scp`→`schtasks /run`→`POST start`→로그 `LIVE TRADING active`+에러0 확인.
+- 🔴 **되돌리기(페이퍼 복귀)**: 위 scp 방식으로 config `is_paper_trading:true` 전송→정지+재기동+start. (실거래 중단하려면 `taskkill`만으로 안 됨=bat 부활·`schtasks /end` 필수).
+
+### ▶▶▶▶ [이전] 종목 3종 확장(WLD+BTC+ETH) — 페이퍼 관찰 중, 다음=사용자 지시 대기 (2026-06-28)
 
 **계기**: 사용자 "매매가 1건도 안 된 거 같은데 검토해줘". **진단=버그 아님.** 봇은 6/27 가동 이후 매 4h 정상 분석을 돌렸으나 WLDUSDT 가격이 좁은 박스권(0.437~0.470)에서만 움직여 **돌파 채널을 한 번도 못 깸** → volatility_breakout 전략이 의도대로 HOLD 대기(진입신호 0 → trades:[]·positions:null). ERROR 0건·스케줄러·Bybit연결 전부 정상이었음.
 
