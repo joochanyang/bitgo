@@ -14,6 +14,7 @@ import (
 	"go-bot/pkg/config"
 	"go-bot/pkg/db"
 	"go-bot/pkg/exchange"
+	"go-bot/pkg/notify"
 	"go-bot/pkg/web"
 )
 
@@ -79,6 +80,16 @@ func main() {
 
 	// Engine instantiation
 	engine = bot.NewEngine(activeEx, aiClient, onTickBroadcast)
+
+	// Telegram trade alerts (open/close/error). Disabled (no-op) when either env
+	// var is empty, so the bot runs fine without Telegram configured.
+	tgNotifier := notify.New(os.Getenv("TELEGRAM_BOT_TOKEN"), os.Getenv("TELEGRAM_CHAT_ID"))
+	engine.SetNotifier(tgNotifier)
+	if tgNotifier != nil {
+		db.LogInfo("Telegram notifications enabled.")
+	} else {
+		db.LogInfo("Telegram notifications disabled (TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID not set).")
+	}
 
 	// WebServer instantiation
 	engineStateCb := func() (bool, bool, exchange.Exchange) {

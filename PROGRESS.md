@@ -7,6 +7,34 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
+### ▶▶▶▶ [현재 진행] 종목 3종 확장(WLD+BTC+ETH) — 페이퍼 관찰 중, 다음=사용자 지시 대기 (2026-06-28)
+
+**계기**: 사용자 "매매가 1건도 안 된 거 같은데 검토해줘". **진단=버그 아님.** 봇은 6/27 가동 이후 매 4h 정상 분석을 돌렸으나 WLDUSDT 가격이 좁은 박스권(0.437~0.470)에서만 움직여 **돌파 채널을 한 번도 못 깸** → volatility_breakout 전략이 의도대로 HOLD 대기(진입신호 0 → trades:[]·positions:null). ERROR 0건·스케줄러·Bybit연결 전부 정상이었음.
+
+- ✅ **종목 확장 완료**: 홈서버 `config.json` `symbols` = `["WLDUSDT","BTCUSDT","ETHUSDT"]` (백업=`config.json.bak`). 진입 기회 늘리기 목적(사용자 선택=대형 메이저 BTC·ETH 추가). **페이퍼 유지**(`is_paper_trading:true`·실주문 0·리스크 0). 멀티심볼은 코드가 이미 지원(`engine.go:238` `for _, symbol := range cfg.Symbols` + `committedPortfolioRisk`로 포트폴리오 합산 리스크캡). risk 1%×3종 = 최대 노출 3%.
+- ✅ **봇 재가동·검증 완료**(SSH 실측): kill→`schtasks /run /tn GoBot`로 재기동(PID 갱신·8090 listening)→`POST /api/status {"action":"start"}` 엔진 Start. `is_running:true`·3종 모두 분석 틱 수행 확인. 현재 3종 다 채널 안 HOLD(BTC 59897∈[58043,61942]·ETH 1564∈[1511,1660]·WLD 0.441∈[0.433,0.539]). next_tick 4h후 예약.
+- 🔴 **운영 메모 정정**: PROGRESS 종전 메모 "run_gobot.bat 루프가 죽으면 10초후 자동재시작"은 **이번에 실측상 작동 안 함** — `taskkill /f /im gobot.exe` 후 자동 부활 안 돼서 **`schtasks /run /tn GoBot` 수동 재기동 필요**했음. schtasks 트리거가 **onstart 전용**(마지막 실행=N/A)이라 bat 루프는 부팅 시에만 살아나는 구조. ⚠️**완전정지/재기동 절차=`taskkill /f /im gobot.exe` → `schtasks /run /tn GoBot`**(자동부활 의존 금지). 엔진은 재기동 후 기본 stopped → `POST /api/status {action:start}` 필요.
+- 🔜 **다음 = 며칠 페이퍼 관찰**(BTC·ETH는 WLD보다 변동성↓ → 돌파빈도 더 적을 수 있음·검증 OOS 데이터 없음·관찰용). 셋 중 하나라도 채널 깨면 자동 진입+텔레그램 🟢알림. 그 후 사용자가 실거래 결정.
+- 📌 **재개 메모(2026-06-28)**: 사용자가 **"내일 관찰 결과 물어보겠다"**고 함(자동 loop/cron 설정 안 함). 재개 시 **즉시 봇 상태 조회**해서 새 거래·포지션·에러 보고: SSH `a@59.11.159.155` → `powershell -Command "(Invoke-WebRequest -UseBasicParsing http://localhost:8090/api/status).Content"` → 로컬에서 `json.loads(raw.decode('utf-8','replace'))`로 파싱(⚠️상황 한글 cp949 깨짐→errors='replace' 필수). 확인 포인트=`trades`(거래수)·`positions`·`situations`별 decision/price/reasoning·logs ERROR 유무. 봇 안 돌면=재기동 절차(위 정정 메모).
+
+### [이전] 실거래 드라이런 준비 — 텔레그램 알림 완료 → 홈서버 배포 대기 (2026-06-27)
+
+**사용자 결정**: 50 USDT 소액 실거래 드라이런을 **홈서버(Windows11, 59.11.159.155)** 에서 돌림. 순서: ①텔레그램 알림 추가 ②홈서버 배포 ③실거래 Start.
+
+- ✅ **Bybit 키 발급·연결 검증 완료**: System-generated(HMAC) 키, `.env`에 주입(`BYBIT_API_KEY`/`BYBIT_API_SECRET`). **봇=HMAC 전용**(RSA 미지원, `bybit.go:67-69`). 실계좌 조회 검증=UNIFIED 통합계좌 **50 USDT 입금 확인**(`/tmp/checkassets`로 조회). ⚠️키 권한에 **Assets(자산) 빠짐**→펀딩계좌 조회는 Permission denied(무관, 봇은 통합계좌만 씀). 현물 2000달러는 통합계좌 밖→사용자가 50만 통합계좌로 이체함.
+- ✅ **텔레그램 알림 기능 완료 + 전면 상세화**(2026-06-27, TDD): 신규 `pkg/notify`(telegram.go+test). **nil-safe**(`New`가 토큰/chatID 중 하나라도 비면 nil 반환→`Send`는 nil 리시버 no-op→키 없으면 조용히 skip·크래시X). 베스트에포트(네트워크 에러=경고로그만). **HTML parse_mode**(<b> 볼드). **알림 9종 전부 풍부한 한국어**(이모지+구분선+수익률%+보유시간+근거+신뢰도+리스크금액):
+  1. 🚀 **봇 시작**(전략·봉·레버리지·종목·리스크%·잔고) 2. 🛑 **봇 정지** 3. 🟢 **진입**(방향·진입가·명목·SL/TP±%·최대손실USDT·신뢰도·근거) 4. 🔚 **청산**(진입→청산·결과±%·보유시간) 5. 🔄 **방향전환**(반대신호 기존청산) 6. 🎯/🛑 **SL/TP 자동체결**(=`syncTradeHistory`가 거래소 하드스톱 발동 감지·**실거래 최중요 알림**·종전 누락분) 7. 🔧 **트레일링**(손절선 이동=수익보호·**per-tick `updateTrailingStop`만**·WS 모니터는 고빈도라 의도적 알림 제외=스팸방지) 8. ⏭️ **진입 보류**(포트폴리오 리스크예산 소진) 9. ⚠️ **에러**.
+  - 엔진 배선(외과적): `Engine.notifier`+`SetNotifier()`(SetExchange 패턴). `executeDecision`/`syncTradeHistory`/`updateTrailingStop`은 mu로 notifier 스냅샷(데드락 없음·핫패스서 락 안 쥠). `Stop()`은 락 **밖**에서 send(네트워크 블록 방지 위해 defer unlock 제거·스냅샷 후 unlock). 신규 헬퍼 `heldDuration(symbol)`(OPEN 트레이드 timestamp로 보유시간). 진입 시 `PositionRiskUSDT`로 최대손실·`qty*entry`로 명목 계산.
+  - main.go가 `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` env 읽어 배선. `.env`/`.env.example`에 2키. **검증**: gofmt/build/vet 클린·전 패키지 `-race` green(notify 단위 + bot 와이어링 3테스트=실제 open send·**stop-hit 감지 send**·nil no-panic). **실 텔레그램 9종 발송 E2E 성공**(`cmd/checktg` 무경고).
+- ✅ **텔레그램 자격증명 주입·검증 완료**: bot `@sjdbdj1212_bot`(바이비트봇). 토큰+chat_id(7980845952) `.env`에. getMe 토큰유효·실발송 수신확인.
+- ✅ **홈서버 배포 완료**(2026-06-27): Win11(59.11.159.155) `C:\bots\gobot\`에 `gobot.exe`(맥 `GOOS=windows GOARCH=amd64` 크로스컴파일·10,644,992B)+`.env`(Bybit+텔레그램 키)+`config.json`(8090·페이퍼·volatility_breakout). **포트=8090**(8080은 Docker Desktop `com.docker.backend.exe` 점유→충돌회피). **schtasks "GoBot" 등록**(`/sc onstart /ru SYSTEM /rl HIGHEST`+`run_gobot.bat`)→재부팅·로그아웃에도 24/7 상주. ⚠️**정정(2026-06-28)**: "죽으면 10초후 자동재시작 루프"는 실측상 작동 안 함 — `taskkill` 후 자동 부활 안 됨. 트리거가 onstart 전용이라 bat 루프는 부팅 시에만 동작. 수동 재기동=`schtasks /run /tn GoBot`. 부팅검증=`Real Bybit client initialized`·`Paper Trading (Mock)`·`Telegram notifications enabled`·`:8090 listening` 전부 OK. **봇 프로세스는 상주하나 트레이딩 엔진=stopped**(안전 기본값·아직 Start 안 누름).
+  - 🔴 **홈서버 운영 명령**(SSH `a@59.11.159.155`, CMD): 상태=`tasklist|findstr gobot`+`netstat -ano|findstr :8090`, 로그=`powershell -Command "Get-Content C:\bots\gobot\bot.log -Tail 20"`, 정지=`taskkill /f /im gobot.exe`(⚠️자동부활 안 됨=정정), 재기동=`taskkill /f /im gobot.exe` 후 `schtasks /run /tn GoBot`(엔진은 재기동 후 기본 stopped → `POST /api/status {action:start}` 필요). 재배포=맥서 크로스컴파일→`taskkill`→scp `gobot.exe`(백슬래시경로 `'a@..:C:\bots\gobot\gobot.exe'`)→`schtasks /run`.
+- ✅ **페이퍼 매매 가동 + 종합점검 통과**(2026-06-27 22:00): `POST localhost:8090/api/status {"action":"start"}`로 엔진 Start. `is_running:true`·HOLD(가격 0.4625, 채널[0.4537,0.5513] 안=돌파대기 정상)·`next_tick_at` 4h후 예약(스케줄러 정상). **점검: ERROR 0건**·WARN 1건(DASHBOARD_TOKEN 미설정=**8090 방화벽 인바운드 규칙 없음→외부노출X→무해**)·Bybit 라이브 잔고 49.93 USDT 조회OK·프로세스/포트/schtasks 전부 정상. 🚀봇시작 텔레그램 수신확인.
+- 🔜 **다음 = 며칠 페이퍼 관찰 → 사용자가 실거래 결정**. 실거래 전환법: ① `config.json` `is_paper_trading:false`(맥서 수정→scp 재배포 또는 SSH로 직접 수정) ② `taskkill /f /im gobot.exe` → `schtasks /run /tn GoBot`(자동부활 없음=정정) ③ Start 재호출. **돈 나감·별도 명시승인 필수**. 임시도구(`cmd/checkconn,checkassets,checktg`)·`run_gobot.bat`은 미커밋·정리 가능.
+- 🔴 **현재도 페이퍼 잠금 유지**(`is_paper_trading=true`)=실주문 0. 실거래=`false` 전환+Start(돈 나감·사용자 최종 승인). 전략=volatility_breakout·4h·WLDUSDT·risk1%·lev3. 4h봉이라 첫 진입까지 시간 걸림.
+- 🔴 **홈서버 배포 함정**(메모리): Win11·CMD셸, **SSH docker build 금지**(credsStore)→Go는 맥에서 `GOOS=windows GOARCH=amd64` 크로스컴파일→.exe만 scp(Docker 불필요). 홈PC SSH→CMD `|grep`/`tail` 금지(파일로 받기).
+- 임시 조회도구(미커밋): `cmd/checkconn`(잔고+포지션), `cmd/checkassets`(UNIFIED+FUND 전체 자산). 일회성이라 배포 전 삭제 가능.
+
 ### ⏭️ [내일 작업] Bybit API 발급 → .env 연결 → 연결만 확인 (페이퍼 유지)
 
 **결정(2026-06-21)**: 사용자가 내일 거래소 API 발급. **방향=AI 없이 룰 전략(volatility_breakout)으로 감**(AI는 백테스트 불가·검증 0%라 보류). **첫 연결=연결만 확인(is_paper_trading=true 유지)+환경변수(.env) 주입**.

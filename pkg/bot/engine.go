@@ -9,6 +9,7 @@ import (
 	"go-bot/pkg/config"
 	"go-bot/pkg/db"
 	"go-bot/pkg/exchange"
+	"go-bot/pkg/notify"
 	"go-bot/pkg/strategy"
 )
 
@@ -23,6 +24,10 @@ type Engine struct {
 	onTick     func() // WebSocket broadcast callback
 	Strategies map[string]strategy.Strategy
 	wsTestnet  bool // public WS price feed uses testnet when true (default false = mainnet)
+
+	// notifier sends best-effort Telegram alerts on open/close/error. Nil when no
+	// Telegram credentials are configured; all calls are nil-safe no-ops.
+	notifier *notify.Notifier
 
 	// marketViews holds the latest per-symbol snapshot the dashboard explains in plain
 	// Korean. Guarded by mu (written each tick, read by MarketViews()).
@@ -129,6 +134,17 @@ func (e *Engine) Start() {
 	cfg := e.config()
 	db.LogInfo("Trading engine started. Mode: Paper Trading = %t, AI Provider = %s", cfg.IsPaperTrading, cfg.AIProvider)
 
+	// Announce start with the active config. Balance is best-effort (skip on error).
+	e.mu.Lock()
+	notifier := e.notifier
+	e.mu.Unlock()
+	bal, _ := e.exchange().GetBalance()
+	stratName := cfg.ActiveStrategy
+	if stratName == "" {
+		stratName = "trend_following"
+	}
+	notifier.Send(notify.FormatStart(stratName, cfg.Interval, cfg.Symbols, cfg.Leverage, cfg.RiskPercentage, bal, cfg.IsPaperTrading))
+
 	// Run initial tick immediately
 	go e.RunTick()
 
@@ -179,16 +195,22 @@ func (e *Engine) Start() {
 // Stop pauses the trading engine
 func (e *Engine) Stop() {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	if !e.IsRunning {
+		e.mu.Unlock()
 		return
 	}
 	e.IsRunning = false
 	e.nextTickAt = time.Time{} // no scheduled tick while stopped
 	close(e.stopChan)
+	notifier := e.notifier
+	paper := e.Config.IsPaperTrading
+	onTick := e.onTick
+	e.mu.Unlock()
+
 	db.LogInfo("Trading engine stopped/paused.")
-	if e.onTick != nil {
-		e.onTick()
+	notifier.Send(notify.FormatStop(paper))
+	if onTick != nil {
+		onTick()
 	}
 }
 
@@ -207,6 +229,7 @@ func (e *Engine) RunTick() {
 	cfg := config.GetConfig()
 	e.mu.Lock()
 	e.Config = cfg
+	notifier := e.notifier
 	e.mu.Unlock()
 
 	// Synchronize local trade history with exchange positions
@@ -217,6 +240,7 @@ func (e *Engine) RunTick() {
 		err := e.analyzeAndTrade(symbol)
 		if err != nil {
 			db.LogError("Error during analysis for %s: %v", symbol, err)
+			notifier.Send(notify.FormatError(symbol, err))
 		}
 	}
 
@@ -237,6 +261,14 @@ func (e *Engine) SetExchange(ex exchange.Exchange) {
 		aiStrat.SetExchange(ex)
 	}
 	db.LogInfo("Exchange backend switched. Paper trading: %t", e.Config.IsPaperTrading)
+}
+
+// SetNotifier sets the Telegram notifier. A nil notifier disables alerts; all
+// notifier calls in the engine are nil-safe, so passing nil is valid.
+func (e *Engine) SetNotifier(n *notify.Notifier) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.notifier = n
 }
 
 func (e *Engine) analyzeAndTrade(symbol string) error {
@@ -322,6 +354,12 @@ func (e *Engine) analyzeAndTrade(symbol string) error {
 }
 
 func (e *Engine) executeDecision(ex exchange.Exchange, cfg *config.Config, symbol string, decision *strategy.Decision, pos *exchange.Position, balance float64, currentPrice float64) error {
+	// Snapshot the notifier under the lock once; all alert sends below use it.
+	// notifier may be nil (no Telegram configured) — Send is a nil-safe no-op.
+	e.mu.Lock()
+	notifier := e.notifier
+	e.mu.Unlock()
+
 	// If strategy suggests HOLD, do nothing
 	if decision.Decision == strategy.HOLD {
 		db.LogInfo("Decision is HOLD for %s. No action taken.", symbol)
@@ -351,8 +389,10 @@ func (e *Engine) executeDecision(ex exchange.Exchange, cfg *config.Config, symbo
 				IsPaper:     cfg.IsPaperTrading,
 				Status:      "CLOSED",
 			}
+			held := e.heldDuration(symbol)
 			db.UpdateTrade(tradeRecord)
 			db.LogInfo("Closed %s position. PnL: %.2f USDT", symbol, pos.UnrealizedPnL)
+			notifier.Send(notify.FormatClose(symbol, pos.Side, pos.Size, pos.EntryPrice, currentPrice, pos.UnrealizedPnL, held, cfg.IsPaperTrading))
 		} else {
 			db.LogInfo("Close order suggested, but no active position exists for %s.", symbol)
 		}
@@ -380,7 +420,9 @@ func (e *Engine) executeDecision(ex exchange.Exchange, cfg *config.Config, symbo
 			IsPaper:     cfg.IsPaperTrading,
 			Status:      "CLOSED",
 		}
+		held := e.heldDuration(symbol)
 		db.UpdateTrade(tradeRecord)
+		notifier.Send(notify.FormatFlip(symbol, pos.Side, pos.Size, pos.EntryPrice, currentPrice, pos.UnrealizedPnL, held, cfg.IsPaperTrading))
 
 		// Reset position locally so subsequent code treats it as NONE
 		pos = &exchange.Position{Symbol: symbol, Side: "NONE", Size: 0}
@@ -420,6 +462,7 @@ func (e *Engine) executeDecision(ex exchange.Exchange, cfg *config.Config, symbo
 		if riskPct <= 0 {
 			db.LogInfo("Skipping %s entry: portfolio risk budget (%.1f%%) exhausted by open positions.",
 				symbol, cfg.MaxPortfolioRiskPct)
+			notifier.Send(notify.FormatSkip(symbol, cfg.MaxPortfolioRiskPct, cfg.IsPaperTrading))
 			return nil
 		}
 
@@ -474,11 +517,33 @@ func (e *Engine) executeDecision(ex exchange.Exchange, cfg *config.Config, symbo
 		}
 		db.AddTrade(tradeRecord)
 		db.LogInfo("Successfully opened %s position for %s. OrderID: %s", decision.Decision, symbol, res.OrderID)
+		// riskUSDT = the at-stop loss this position carries; notional = position value.
+		riskUSDT := strategy.PositionRiskUSDT(qty, entryPrice, slPrice)
+		notionalUSDT := qty * entryPrice
+		notifier.Send(notify.FormatOpen(symbol, string(decision.Decision), qty, entryPrice, slPrice, tpPrice,
+			targetLeverage, decision.Confidence, riskUSDT, notionalUSDT, decision.Reasoning, cfg.IsPaperTrading))
 	} else {
 		db.LogInfo("Position already active for %s (%s %.3f). Maintaining position.", symbol, pos.Side, pos.Size)
 	}
 
 	return nil
+}
+
+// heldDuration returns how long the currently-open trade for symbol has been
+// held, by looking up its OPEN record's timestamp. Returns 0 if not found
+// (notifications then simply omit the hold time).
+func (e *Engine) heldDuration(symbol string) time.Duration {
+	trades, err := db.GetTrades()
+	if err != nil {
+		return 0
+	}
+	for i := len(trades) - 1; i >= 0; i-- {
+		t := trades[i]
+		if t.Symbol == symbol && t.Status == "OPEN" {
+			return time.Since(t.Timestamp)
+		}
+	}
+	return 0
 }
 
 // committedPortfolioRisk sums the at-stop loss of every OTHER open position (in quote
@@ -505,11 +570,18 @@ func (e *Engine) updateTrailingStop(ex exchange.Exchange, symbol string, pos *ex
 	if !shouldUpdate {
 		return
 	}
+	oldSL := pos.StopLossPrice
 	db.LogInfo("[TRAILING STOP] Moving %s stop loss for %s from %.4f to %.4f (Current Price: %.4f)",
-		pos.Side, symbol, pos.StopLossPrice, newSL, currentPrice)
+		pos.Side, symbol, oldSL, newSL, currentPrice)
 	if err := ex.SetStopLoss(symbol, newSL); err != nil {
 		db.LogError("[TRAILING STOP] Failed to update stop loss: %v", err)
+		return
 	}
+	e.mu.Lock()
+	notifier := e.notifier
+	paper := e.Config.IsPaperTrading
+	e.mu.Unlock()
+	notifier.Send(notify.FormatTrailing(symbol, pos.Side, oldSL, newSL, currentPrice, paper))
 }
 
 // runStopMonitor streams real-time public prices and tightens trailing stops between
@@ -564,6 +636,10 @@ func (e *Engine) parseInterval(interval string) time.Duration {
 // syncTradeHistory synchronizes local trades database with exchange positions
 func (e *Engine) syncTradeHistory() {
 	ex := e.exchange()
+	e.mu.Lock()
+	notifier := e.notifier
+	paper := e.Config.IsPaperTrading
+	e.mu.Unlock()
 	trades, err := db.GetTrades()
 	if err != nil {
 		db.LogError("Failed to load trades for sync: %v", err)
@@ -610,6 +686,10 @@ func (e *Engine) syncTradeHistory() {
 				db.LogError("Failed to update synced trade in database: %v", err)
 			} else {
 				db.LogInfo("Sync: Detected closed position for %s. Database record updated. Realized PnL: %.2f USDT", t.Symbol, pnl)
+				// The position closed on the exchange without a bot CLOSE decision —
+				// i.e. a hard stop-loss or take-profit fired. This is the alert the
+				// user most needs while away from the dashboard.
+				notifier.Send(notify.FormatStopHit(t.Symbol, t.Side, t.Size, t.EntryPrice, currentPrice, pnl, paper))
 			}
 		}
 	}
