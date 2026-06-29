@@ -55,6 +55,41 @@ func TestValidateBlocksEntryWhenBalanceUnknown(t *testing.T) {
 	}
 }
 
+func TestValidateClampsSizeToPortfolioBudget(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 3, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		CommittedRiskUSDT: 4.5, MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionEnterLong {
+		t.Fatalf("entry should remain, got %s", safe.Action)
+	}
+	if safe.SizePct > 1.0001 {
+		t.Fatalf("sizePct should be clamped to ~1%%, got %v", safe.SizePct)
+	}
+	if !hasRule(rejections, "portfolio_risk_clamp") {
+		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateBlocksEntryWhenBudgetExhausted(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 2, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		CommittedRiskUSDT: 5.0, MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("exhausted budget should block entry, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "portfolio_risk_clamp") {
+		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
+	}
+}
+
 func hasRule(rs []agent.Rejection, rule string) bool {
 	for _, r := range rs {
 		if r.Rule == rule {

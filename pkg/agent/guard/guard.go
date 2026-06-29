@@ -3,7 +3,10 @@
 // Validate, which can downgrade or reject it. The AI can never bypass this.
 package guard
 
-import "go-bot/pkg/agent"
+import (
+	"go-bot/pkg/agent"
+	"go-bot/pkg/strategy"
+)
 
 // Guard validates AI decisions against deterministic risk rules.
 type Guard struct {
@@ -48,6 +51,29 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 			Message: "balance unavailable; entry blocked",
 		})
 		d.Action = agent.ActionHold
+	}
+
+	// Rule: clamp entry size to the remaining portfolio risk budget. Reuses the live
+	// bot's AvailableRiskPct so the AI agent obeys the same 10% portfolio cap. If the
+	// budget is exhausted (0 available), the entry is downgraded to HOLD.
+	if d.Action.IsEntry() {
+		avail := strategy.AvailableRiskPct(acc.Balance, acc.MaxPortfolioRisk, acc.CommittedRiskUSDT, d.SizePct)
+		// epsilon guards against float residue at an exactly-exhausted budget
+		// (balance*0.1 - committed can leave ~1e-15 instead of 0).
+		const minSizePct = 1e-9
+		if avail <= minSizePct {
+			rejections = append(rejections, agent.Rejection{
+				Rule:    "portfolio_risk_clamp",
+				Message: "portfolio risk budget exhausted; entry blocked",
+			})
+			d.Action = agent.ActionHold
+		} else if avail < d.SizePct {
+			rejections = append(rejections, agent.Rejection{
+				Rule:    "portfolio_risk_clamp",
+				Message: "size reduced to fit remaining portfolio risk budget",
+			})
+			d.SizePct = avail
+		}
 	}
 
 	return d, rejections
