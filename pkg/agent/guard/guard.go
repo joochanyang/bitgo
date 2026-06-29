@@ -58,8 +58,11 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 	// budget is exhausted (0 available), the entry is downgraded to HOLD.
 	if d.Action.IsEntry() {
 		avail := strategy.AvailableRiskPct(acc.Balance, acc.MaxPortfolioRisk, acc.CommittedRiskUSDT, d.SizePct)
-		// epsilon guards against float residue at an exactly-exhausted budget
-		// (balance*0.1 - committed can leave ~1e-15 instead of 0).
+		// epsilon treats a negligibly tiny remaining budget as exhausted. A fully
+		// spent budget already returns a clean 0 from AvailableRiskPct; the partial
+		// case divides remaining/balance*100, which can land a hair below the
+		// requested pct (e.g. 0.9999999998%). Rounding that residue down avoids
+		// admitting a meaningless sub-1e-9% entry.
 		const minSizePct = 1e-9
 		if avail <= minSizePct {
 			rejections = append(rejections, agent.Rejection{
