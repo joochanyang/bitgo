@@ -30,5 +30,25 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 		d.Action = agent.ActionHold
 	}
 
+	// Rule: entries must declare a stop-loss. A leveraged position with no SL can lose
+	// far more than intended — block it. (Mirrors the live rule-bot's SL guarantee.)
+	if d.Action.IsEntry() && d.StopLossPct <= 0 {
+		rejections = append(rejections, agent.Rejection{
+			Rule:    "stop_loss_required",
+			Message: "entry has no stop-loss; downgraded to HOLD",
+		})
+		d.Action = agent.ActionHold
+	}
+
+	// Rule: never open a position when the balance lookup failed — sizing would be
+	// guesswork. (The live bot hit balance:0 once; this blocks that path.)
+	if d.Action.IsEntry() && !acc.BalanceOK {
+		rejections = append(rejections, agent.Rejection{
+			Rule:    "balance_unknown",
+			Message: "balance unavailable; entry blocked",
+		})
+		d.Action = agent.ActionHold
+	}
+
 	return d, rejections
 }
