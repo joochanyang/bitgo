@@ -119,6 +119,48 @@ func TestValidateAllowsEntryWhenQtyAboveMin(t *testing.T) {
 	}
 }
 
+// SHORT 진입도 LONG과 동일하게 모든 규칙의 보호를 받는다. IsEntry()가 양방향을
+// 포함한다는 불변식을 고정해, 누가 진입 판정을 건드려도 잡아낸다.
+func TestValidateProtectsShortEntry(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterShort, SizePct: 1, StopLossPct: 0, Confidence: 0.40}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("unsafe SHORT entry must be blocked, got %s", safe.Action)
+	}
+	if len(rejections) == 0 {
+		t.Fatal("expected rejections for unsafe SHORT entry")
+	}
+}
+
+// 비진입 액션(HOLD/CLOSE 등)은 가드를 그대로 통과한다 — 가드는 진입만 건드린다.
+func TestValidatePassesThroughNonEntry(t *testing.T) {
+	g := New(0.55)
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	for _, act := range []agent.Action{agent.ActionHold, agent.ActionClose, agent.ActionPartialClose, agent.ActionAdjustSL} {
+		d := agent.Decision{Action: act, Confidence: 0.0}
+		safe, rejections := g.Validate(d, acc)
+		if safe.Action != act {
+			t.Fatalf("non-entry %s should pass through unchanged, got %s", act, safe.Action)
+		}
+		if len(rejections) != 0 {
+			t.Fatalf("non-entry %s should produce no rejections, got %+v", act, rejections)
+		}
+	}
+}
+
+// 여러 규칙을 동시에 위반하면 rejection이 누적된다(전체 사유가 보고됨).
+func TestValidateAccumulatesRejections(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 0, Confidence: 0.40}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	_, rejections := g.Validate(d, acc)
+	if !hasRule(rejections, "min_confidence") || !hasRule(rejections, "stop_loss_required") {
+		t.Fatalf("expected both min_confidence and stop_loss_required, got %+v", rejections)
+	}
+}
+
 func hasRule(rs []agent.Rejection, rule string) bool {
 	for _, r := range rs {
 		if r.Rule == rule {

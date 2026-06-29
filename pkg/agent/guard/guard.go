@@ -25,7 +25,14 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 	var rejections []agent.Rejection
 
 	// Rule: low-confidence entries are downgraded to HOLD.
-	if d.Action.IsEntry() && d.Confidence < g.minConfidence {
+	// wasEntry records the original intent. The eligibility rules below check it (not
+	// the live d.Action) so that ALL violation reasons accumulate — if an entry both
+	// lacks a stop-loss and is low-confidence, the user/memory sees both, not just the
+	// first. The action is set to HOLD on any violation; the result is identical, but
+	// the rejection list is complete.
+	wasEntry := d.Action.IsEntry()
+
+	if wasEntry && d.Confidence < g.minConfidence {
 		rejections = append(rejections, agent.Rejection{
 			Rule:    "min_confidence",
 			Message: "entry confidence below threshold; downgraded to HOLD",
@@ -35,7 +42,7 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 
 	// Rule: entries must declare a stop-loss. A leveraged position with no SL can lose
 	// far more than intended — block it. (Mirrors the live rule-bot's SL guarantee.)
-	if d.Action.IsEntry() && d.StopLossPct <= 0 {
+	if wasEntry && d.StopLossPct <= 0 {
 		rejections = append(rejections, agent.Rejection{
 			Rule:    "stop_loss_required",
 			Message: "entry has no stop-loss; downgraded to HOLD",
@@ -45,7 +52,7 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 
 	// Rule: never open a position when the balance lookup failed — sizing would be
 	// guesswork. (The live bot hit balance:0 once; this blocks that path.)
-	if d.Action.IsEntry() && !acc.BalanceOK {
+	if wasEntry && !acc.BalanceOK {
 		rejections = append(rejections, agent.Rejection{
 			Rule:    "balance_unknown",
 			Message: "balance unavailable; entry blocked",
