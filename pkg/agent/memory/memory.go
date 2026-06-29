@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"sort"
+	"time"
 
 	"go-bot/pkg/agent"
 )
@@ -73,6 +74,67 @@ func (s *Store) Recall(symbol, regime string, k int) []agent.TradeEpisode {
 		matches = matches[:k]
 	}
 	return matches
+}
+
+// PerformanceSummary is the aggregate over closed episodes, used by the performance
+// tracker to decide when to suggest a stage upgrade (paper -> live -> larger size).
+type PerformanceSummary struct {
+	Closed  int     `json:"closed"`
+	Wins    int     `json:"wins"`
+	WinRate float64 `json:"win_rate"`
+	AvgPnL  float64 `json:"avg_pnl"`
+}
+
+// Close fills in the retrospective outcome for the episode with the given id and
+// persists. This is how a decision gets labelled right/wrong after the fact, so future
+// Recalls carry the lesson. Returns an error if the id is not found.
+func (s *Store) Close(id string, closedAt time.Time, exitPrice, pnlPct float64, reason string) error {
+	eps, err := s.All()
+	if err != nil {
+		return err
+	}
+	found := false
+	for i := range eps {
+		if eps[i].ID == id {
+			eps[i].Closed = true
+			eps[i].ClosedAt = closedAt
+			eps[i].ExitPrice = exitPrice
+			eps[i].PnLPct = pnlPct
+			eps[i].ExitReason = reason
+			found = true
+			break
+		}
+	}
+	if !found {
+		return os.ErrNotExist
+	}
+	return s.writeAll(eps)
+}
+
+// Stats aggregates closed episodes. Open episodes are ignored. On read error it
+// returns a zero summary.
+func (s *Store) Stats() PerformanceSummary {
+	all, err := s.All()
+	if err != nil {
+		return PerformanceSummary{}
+	}
+	var sum PerformanceSummary
+	var pnlTotal float64
+	for _, ep := range all {
+		if !ep.Closed {
+			continue
+		}
+		sum.Closed++
+		pnlTotal += ep.PnLPct
+		if ep.PnLPct > 0 {
+			sum.Wins++
+		}
+	}
+	if sum.Closed > 0 {
+		sum.WinRate = float64(sum.Wins) / float64(sum.Closed)
+		sum.AvgPnL = pnlTotal / float64(sum.Closed)
+	}
+	return sum
 }
 
 func (s *Store) writeAll(eps []agent.TradeEpisode) error {

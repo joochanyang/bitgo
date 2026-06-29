@@ -79,3 +79,43 @@ func mustRecord(t *testing.T, s *Store, id, sym, regime string, ts int64) {
 		t.Fatalf("Record %s: %v", id, err)
 	}
 }
+
+func TestCloseFillsOutcome(t *testing.T) {
+	s := tmpStore(t)
+	mustRecord(t, s, "e1", "WLDUSDT", "trending_up", 100)
+	if err := s.Close("e1", time.Unix(500, 0), 0.55, 10.0, "tp"); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	all, _ := s.All()
+	if !all[0].Closed || all[0].PnLPct != 10.0 || all[0].ExitReason != "tp" {
+		t.Fatalf("episode not closed correctly: %+v", all[0])
+	}
+}
+
+func TestStatsWinRate(t *testing.T) {
+	s := tmpStore(t)
+	mustRecord(t, s, "w1", "WLDUSDT", "x", 1)
+	mustRecord(t, s, "w2", "WLDUSDT", "x", 2)
+	mustRecord(t, s, "l1", "WLDUSDT", "x", 3)
+	mustRecord(t, s, "open", "WLDUSDT", "x", 4)
+	mustClose(t, s, "w1", 5.0)
+	mustClose(t, s, "w2", 3.0)
+	mustClose(t, s, "l1", -4.0)
+	st := s.Stats()
+	if st.Closed != 3 {
+		t.Fatalf("expected 3 closed, got %d", st.Closed)
+	}
+	if st.Wins != 2 {
+		t.Fatalf("expected 2 wins, got %d", st.Wins)
+	}
+	if st.WinRate < 0.66 || st.WinRate > 0.67 {
+		t.Fatalf("expected winRate ~0.667, got %v", st.WinRate)
+	}
+}
+
+func mustClose(t *testing.T, s *Store, id string, pnlPct float64) {
+	t.Helper()
+	if err := s.Close(id, time.Unix(999, 0), 0, pnlPct, "test"); err != nil {
+		t.Fatalf("Close %s: %v", id, err)
+	}
+}
