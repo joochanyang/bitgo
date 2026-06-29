@@ -76,5 +76,20 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 		}
 	}
 
+	// Rule: block entries whose risk-based qty falls below the exchange minimum. Forcing
+	// the minimum would size a position larger than the intended risk% (a real hazard on
+	// a small account with a high-priced coin — e.g. BTC at 50 USDT). HOLD instead.
+	if d.Action.IsEntry() && acc.MinOrderQty > 0 && acc.Price > 0 {
+		slDistPerUnit := acc.Price * (d.StopLossPct / 100.0)
+		qty := strategy.RiskBasedQty(acc.Balance, d.SizePct, slDistPerUnit, acc.Price, acc.Leverage)
+		if qty < acc.MinOrderQty {
+			rejections = append(rejections, agent.Rejection{
+				Rule:    "below_min_order_qty",
+				Message: "risk-based qty below exchange minimum; entry blocked to avoid oversizing",
+			})
+			d.Action = agent.ActionHold
+		}
+	}
+
 	return d, rejections
 }

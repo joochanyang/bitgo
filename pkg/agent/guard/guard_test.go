@@ -90,6 +90,35 @@ func TestValidateBlocksEntryWhenBudgetExhausted(t *testing.T) {
 	}
 }
 
+func TestValidateBlocksWhenQtyBelowMinOrder(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "BTCUSDT", Balance: 50, Price: 60000, MinOrderQty: 0.001, Leverage: 3,
+		MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("entry below min order qty should be blocked, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "below_min_order_qty") {
+		t.Fatalf("expected below_min_order_qty rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateAllowsEntryWhenQtyAboveMin(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, _ := g.Validate(d, acc)
+	if safe.Action != agent.ActionEnterLong {
+		t.Fatalf("low-price entry should remain, got %s", safe.Action)
+	}
+}
+
 func hasRule(rs []agent.Rejection, rule string) bool {
 	for _, r := range rs {
 		if r.Rule == rule {
