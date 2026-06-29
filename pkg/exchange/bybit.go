@@ -543,10 +543,23 @@ func (b *BybitExchange) PlaceOrder(symbol string, side string, qty float64, pric
 	// /v5/order/create returns only the orderId, never the executed price. For a market
 	// order the real average fill is unknown here, so read it back from the resulting
 	// position (entryPrice). Fall back to the requested limit price if the lookup fails.
+	//
+	// The same position read-back also lets us verify the stop-loss actually landed:
+	// Bybit can accept the order (retCode 0) yet silently drop the stopLoss param,
+	// leaving a live leveraged position unprotected until the next tick. If we intended
+	// an SL but the position came back without one, re-arm it immediately.
 	fillPrice := price
 	if !opts.ReduceOnly {
-		if pos, perr := b.GetPosition(symbol); perr == nil && pos.Size > 0 && pos.EntryPrice > 0 {
-			fillPrice = pos.EntryPrice
+		if pos, perr := b.GetPosition(symbol); perr == nil {
+			if pos.Size > 0 && pos.EntryPrice > 0 {
+				fillPrice = pos.EntryPrice
+			}
+			if stopLossNeedsRepair(opts.StopLossPrice, opts.ReduceOnly, pos.Size, pos.StopLossPrice) {
+				db.LogWarn("Stop-loss missing on %s position after entry; re-arming SL at %.*f", symbol, priceDecimals, opts.StopLossPrice)
+				if serr := b.SetStopLoss(symbol, opts.StopLossPrice); serr != nil {
+					db.LogError("Failed to re-arm stop-loss for %s: %v", symbol, serr)
+				}
+			}
 		}
 	}
 
@@ -600,6 +613,15 @@ func (b *BybitExchange) SetLeverage(symbol string, leverage int) error {
 		return err
 	}
 	return nil
+}
+
+// stopLossNeedsRepair reports whether an entry that intended a stop-loss ended up
+// with a live position that has no stop-loss set on the exchange. It returns true
+// only when an SL was intended, the order was not a reduce-only close, a position
+// is actually open, and the exchange reports no stop-loss — the one case where we
+// must re-arm the SL to avoid an unprotected leveraged position.
+func stopLossNeedsRepair(intendedSL float64, reduceOnly bool, posSize, posSL float64) bool {
+	return intendedSL > 0 && !reduceOnly && posSize > 0 && posSL == 0
 }
 
 // SetStopLoss amends the stop-loss price on an existing position via the trading-stop endpoint

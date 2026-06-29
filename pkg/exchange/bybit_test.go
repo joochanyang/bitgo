@@ -111,3 +111,33 @@ func TestStepDecimals(t *testing.T) {
 		}
 	}
 }
+
+// TestStopLossMissingAfterEntry verifies the guard that detects when an entry
+// order was placed with a stop-loss intent but the resulting position came back
+// without a stop-loss actually set on the exchange (Bybit may accept the order
+// yet drop the SL parameter — leaving a live position unprotected).
+func TestStopLossMissingAfterEntry(t *testing.T) {
+	cases := []struct {
+		name         string
+		intendedSL   float64 // opts.StopLossPrice requested with the order
+		reduceOnly   bool
+		posSize      float64 // size returned by GetPosition after the order
+		posSL        float64 // stopLoss returned by GetPosition after the order
+		wantNeedsSet bool
+	}{
+		{"sl intended but missing on position", 100.0, false, 0.5, 0, true},
+		{"sl intended and present", 100.0, false, 0.5, 99.5, false},
+		{"no sl intended", 0, false, 0.5, 0, false},
+		{"reduce-only close needs no sl", 100.0, true, 0.5, 0, false},
+		{"no position opened", 100.0, false, 0, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := stopLossNeedsRepair(c.intendedSL, c.reduceOnly, c.posSize, c.posSL)
+			if got != c.wantNeedsSet {
+				t.Fatalf("stopLossNeedsRepair(intendedSL=%v, reduceOnly=%v, size=%v, posSL=%v) = %v, want %v",
+					c.intendedSL, c.reduceOnly, c.posSize, c.posSL, got, c.wantNeedsSet)
+			}
+		})
+	}
+}
