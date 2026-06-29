@@ -6,6 +6,7 @@ package memory
 import (
 	"encoding/json"
 	"os"
+	"sort"
 
 	"go-bot/pkg/agent"
 )
@@ -49,6 +50,29 @@ func (s *Store) Record(ep agent.TradeEpisode) error {
 	}
 	eps = append(eps, ep)
 	return s.writeAll(eps)
+}
+
+// Recall returns up to k past episodes matching the given symbol and regime, most
+// recent first. Phase 1 uses simple rule-based matching; embedding similarity is a
+// later enhancement. On read error it returns nil (caller treats memory as empty).
+func (s *Store) Recall(symbol, regime string, k int) []agent.TradeEpisode {
+	all, err := s.All()
+	if err != nil {
+		return nil
+	}
+	var matches []agent.TradeEpisode
+	for _, ep := range all {
+		if ep.Symbol == symbol && ep.Regime == regime {
+			matches = append(matches, ep)
+		}
+	}
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].OpenedAt.After(matches[j].OpenedAt)
+	})
+	if k > 0 && len(matches) > k {
+		matches = matches[:k]
+	}
+	return matches
 }
 
 func (s *Store) writeAll(eps []agent.TradeEpisode) error {
