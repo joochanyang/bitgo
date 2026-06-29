@@ -7,6 +7,17 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
+### 🟢 [자동복구 세팅] 전원끊김·크래시 무인 복구 체인 완성 — 검증됨 (2026-06-29)
+
+**계기**: 홈서버가 **비정상 전원 끊김**(Event ID 41+6008, 오늘 10:23경)으로 꺼짐→재부팅 후 엔진 stopped 방치. **이력=1/21·1/24×2·6/29 반복**(전원 차단성 종료 패턴, SW로 못 막음). 사용자 "재발 안 하게 완벽 점검 세팅". → **"꺼져도 사람 손 0으로 실거래까지 완전 자동복구"** 체인 구축·실측 검증.
+
+- ✅ **자동복구 체인**(실측 검증=봇+래퍼 완전 kill→schtasks 재기동→30초 후 `is_running:true` 자동 도달):
+  `전원복구→부팅→schtasks GoBot(BootTrigger·SYSTEM·HighestAvailable)→run_gobot.bat 루프→gobot.exe(크래시시 10초 자동부활)→autostart.ps1(8090 대기 후 POST start, 이미 running이면 skip=멱등)→실거래 자동재개`.
+- ✅ **핵심 신규 = `autostart.ps1`**(`C:\bots\gobot\`): 봇 기동 후 엔진 자동 start. 종전엔 재부팅/크래시마다 엔진 stopped로 방치됐음(안전 기본값이나 무인복구 안 됨). **`run_gobot.bat` 수정**=루프 안에서 봇 기동 직전 `start /b powershell -File autostart.ps1` 호출(백업=`run_gobot.bat.bak`). ⚠️**bat/ps1 전송은 반드시 로컬 작성→scp**(BOM 함정). 이미 도는 cmd 래퍼는 옛 bat을 메모리에 들고 도니, 새 bat 적용하려면 `schtasks /end`+`taskkill`로 래퍼까지 끊고 재기동 필요.
+- ✅ **절전/슬립/하이버네이트 OFF**(이미 standby AC=0였으나 명시 재설정): `powercfg /change standby-timeout-ac/dc 0`·`hibernate-timeout 0`·`/hibernate off`. → Windows 자의로 안 멈춤.
+- ✅ **시계 자동동기화 강화**: w32time `START_TYPE=AUTO_START`·NTP 3소스(time.windows/google/nist `0x9`)·`/reliable:yes`. 부팅 후 자동 동기화 보장→재부팅발 시계 드리프트로 인한 10002 방지(+ recvWindow 15s 이중방어). 현 오차 424ms.
+- 🔴 **무인복구 한계**: 물리 전원 끊김 자체는 SW로 못 막음(UPS 무정전전원장치가 근본 해결). 잦으면 전원/공유기/과열 점검 필요. **재발해도 위 체인이 자동 복구**=실거래 공백 최소화(부팅~재개 ~1분).
+
 ### 🔴🔴🔴 [현재 진행] 실거래 전환 완료 — LIVE 가동 중·관찰/업그레이드 단계 (2026-06-29)
 
 **사용자 지시**: "실거래로 전환해줘 + 부족/업그레이드 지속 관찰". **완료=홈서버 봇 LIVE 전환·검증**.
