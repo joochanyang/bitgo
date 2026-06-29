@@ -6,14 +6,19 @@ package memory
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"go-bot/pkg/agent"
 )
 
-// Store is a file-backed episode store. Construct with New.
+// Store is a file-backed episode store. Construct with New. All exported methods are
+// goroutine-safe: a mutex serializes the read-modify-write of Record/Close so concurrent
+// callers cannot clobber each other's episodes (the same guarantee pkg/db gives trades).
 type Store struct {
+	mu   sync.Mutex
 	path string
 }
 
@@ -25,6 +30,15 @@ func New(path string) *Store {
 // All returns every recorded episode, oldest first. An absent file is not an error
 // (returns empty), matching pkg/db's loadTradesRaw behaviour.
 func (s *Store) All() ([]agent.TradeEpisode, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.loadLocked()
+}
+
+// loadLocked reads and parses the episode file. Callers must hold s.mu. It exists so
+// the read-modify-write methods (Record/Close) can load without re-acquiring the lock
+// (which would deadlock).
+func (s *Store) loadLocked() ([]agent.TradeEpisode, error) {
 	if _, err := os.Stat(s.path); os.IsNotExist(err) {
 		return []agent.TradeEpisode{}, nil
 	}
@@ -43,9 +57,12 @@ func (s *Store) All() ([]agent.TradeEpisode, error) {
 }
 
 // Record appends an episode and persists atomically (write temp + rename), the same
-// crash-safe pattern pkg/db uses for trades.json.
+// crash-safe pattern pkg/db uses for trades.json. The whole read-modify-write is held
+// under the lock so a concurrent Record/Close cannot overwrite this episode.
 func (s *Store) Record(ep agent.TradeEpisode) error {
-	eps, err := s.All()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	eps, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
@@ -89,7 +106,9 @@ type PerformanceSummary struct {
 // persists. This is how a decision gets labelled right/wrong after the fact, so future
 // Recalls carry the lesson. Returns an error if the id is not found.
 func (s *Store) Close(id string, closedAt time.Time, exitPrice, pnlPct float64, reason string) error {
-	eps, err := s.All()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	eps, err := s.loadLocked()
 	if err != nil {
 		return err
 	}
@@ -137,14 +156,31 @@ func (s *Store) Stats() PerformanceSummary {
 	return sum
 }
 
+// writeAll persists episodes atomically: write to a unique temp file in the same dir,
+// then rename over the target. Callers must hold s.mu. Mirrors pkg/db.writeFileAtomic —
+// unique temp name (no collision), defer-remove on failure (no .tmp litter), and 0600
+// perms (trade records are owner-only, not world-readable).
 func (s *Store) writeAll(eps []agent.TradeEpisode) error {
 	data, err := json.MarshalIndent(eps, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	dir := filepath.Dir(s.path)
+	tmp, err := os.CreateTemp(dir, ".episodes-*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.path)
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // best-effort cleanup if rename fails or we error out
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.path)
 }

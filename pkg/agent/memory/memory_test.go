@@ -1,7 +1,10 @@
 package memory
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,5 +120,39 @@ func mustClose(t *testing.T, s *Store, id string, pnlPct float64) {
 	t.Helper()
 	if err := s.Close(id, time.Unix(999, 0), 0, pnlPct, "test"); err != nil {
 		t.Fatalf("Close %s: %v", id, err)
+	}
+}
+
+// 존재하지 않는 id로 Close하면 os.ErrNotExist를 반환한다(errors.Is로 구분 가능).
+func TestCloseUnknownID(t *testing.T) {
+	s := tmpStore(t)
+	mustRecord(t, s, "e1", "WLDUSDT", "x", 1)
+	err := s.Close("nope", time.Unix(1, 0), 0, 1.0, "test")
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected os.ErrNotExist for unknown id, got %v", err)
+	}
+}
+
+// 동시 Record가 서로의 에피소드를 덮어쓰지 않는다(mutex가 read-modify-write를 직렬화).
+// -race로 돌리면 락이 빠졌을 때 데이터 경합/유실을 잡아낸다.
+func TestConcurrentRecordNoLoss(t *testing.T) {
+	s := tmpStore(t)
+	const n = 30
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			id := "e" + string(rune('A'+i%26)) + string(rune('0'+i/26))
+			_ = s.Record(agent.TradeEpisode{ID: id, Symbol: "WLDUSDT", Regime: "x", OpenedAt: time.Unix(int64(i), 0)})
+		}(i)
+	}
+	wg.Wait()
+	all, err := s.All()
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(all) != n {
+		t.Fatalf("concurrent Record lost episodes: expected %d, got %d", n, len(all))
 	}
 }
