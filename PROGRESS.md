@@ -7,6 +7,17 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
+### 🤖 [AI 에이전트 Phase 1 완료] 토대(guard·memory·brain) — 페이퍼 전, 다음=Phase 2 (2026-06-30)
+
+**설계서**: `docs/superpowers/specs/2026-06-30-ai-trading-agent-design.md`. **계획**: `docs/superpowers/plans/2026-06-30-ai-agent-phase1.md`. 브랜치 `feat/ai-agent-phase1`(미머지 — 다음 세션서 머지 결정). 서브에이전트 구동 개발(태스크별 구현→스펙리뷰→코드품질리뷰).
+
+- ✅ **새 `pkg/agent/` (실거래 룰봇 `pkg/bot`과 완전 별개·무변경)**: types(Decision·Action·AccountState·TradeEpisode·Rejection) + guard(결정론적 리스크가드) + memory(결과회고 장기기억) + brain(Council 인터페이스+MockCouncil).
+- ✅ **guard 규칙**(순수코드, AI 우회불가): ①confidence임계 강등 ②진입SL필수 ③잔고조회실패 차단 ④포트폴리오리스크 클램프(`strategy.AvailableRiskPct` 재사용) ⑤소액계좌 최소수량 미달차단(`strategy.RiskBasedQty` 재사용·감사발견 BTC오버사이징 대응). **리뷰서 결함 1건 잡음**: 자격위반 사유 누적(첫 규칙 강등 후 뒤 규칙 스킵되던 것→`wasEntry`로 원본의도 기준 평가, 차단결과 동일·사유 완전). 표기반 단위테스트 11개(SHORT보호·비진입 패스스루·누적 포함).
+- ✅ **memory**: 에피소드 atomic JSON 저장·규칙기반 Recall(심볼+regime 최근순K)·회고 Close(결과채움)·Stats(승률·평균PnL). **리뷰서 Important 2건 잡음**: `sync.Mutex` 직렬화(read-modify-write 동시호출 유실방지·`pkg/db` 정합) + atomic쓰기 강화(유니크temp+defer정리+0600). 테스트 8개(동시성 `-race`·미존재id 에러 포함).
+- ✅ **brain**: 모델 추상화(`Council` 인터페이스). Phase1은 MockCouncil만(AI 비용0). 실 Bull/Bear/Risk=Phase2. ⚠️Phase2 메모: `Deliberate(ctx Context)`의 `ctx`명이 `context.Context`와 혼동→Phase2서 LLM 취소/타임아웃 추가 시 `Deliberate(context.Context, situation)` 형태로 변경 예상.
+- ✅ **검증**: 전 패키지 build/vet/`-race` green, 기존 실거래 봇 무변경 회귀0. 통합테스트(guard가 위험 council결정 차단).
+- 🔜 **다음 = Phase 2**: council 실구현(Bull/Bear 병렬 + Risk 종합·LLM 연결) + runner(trigger→memory.recall→council→guard→execute→memory.record 엮기). **AI 모델 선택 필요**(사용자가 "중국계 말고 트레이딩특화 있나?" 물음→조사결과 "특화LLM보다 구조가 중요"·모델은 교체가능하게 추상화됨. Claude/Gemini/GPT 중 키 발급해 택1). 페이퍼 검증부터.
+
 ### 🛡️ [실거래 보강 #1] 진입 후 SL 미설정 감지·재설정 가드 — 완료·재배포 (2026-06-29)
 
 **계기**: 사용자 "실전이니 계속 관찰·보강·업그레이드". → **3-관점 병렬 코드감사**(주문정확성·리스크·견고성, 각 Opus 에이전트) 수행. **세 감사 모두 최우선 지목 = "진입은 됐는데 SL 안 걸림" 무방비**.

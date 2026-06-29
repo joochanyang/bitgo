@@ -1,0 +1,171 @@
+package guard
+
+import (
+	"testing"
+
+	"go-bot/pkg/agent"
+)
+
+func TestValidateDowngradesLowConfidence(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.40}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("low-confidence entry should downgrade to HOLD, got %s", safe.Action)
+	}
+	if len(rejections) == 0 {
+		t.Fatal("expected a rejection explaining the downgrade")
+	}
+}
+
+func TestValidateKeepsConfidentEntry(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.80}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	safe, _ := g.Validate(d, acc)
+	if safe.Action != agent.ActionEnterLong {
+		t.Fatalf("confident entry should be kept, got %s", safe.Action)
+	}
+}
+
+func TestValidateRejectsEntryWithoutStopLoss(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 0, Confidence: 0.9}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("entry without SL must be downgraded to HOLD, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "stop_loss_required") {
+		t.Fatalf("expected stop_loss_required rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateBlocksEntryWhenBalanceUnknown(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 0, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: false}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("entry with unknown balance must be blocked, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "balance_unknown") {
+		t.Fatalf("expected balance_unknown rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateClampsSizeToPortfolioBudget(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 3, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		CommittedRiskUSDT: 4.5, MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionEnterLong {
+		t.Fatalf("entry should remain, got %s", safe.Action)
+	}
+	if safe.SizePct > 1.0001 {
+		t.Fatalf("sizePct should be clamped to ~1%%, got %v", safe.SizePct)
+	}
+	if !hasRule(rejections, "portfolio_risk_clamp") {
+		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateBlocksEntryWhenBudgetExhausted(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 2, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		CommittedRiskUSDT: 5.0, MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("exhausted budget should block entry, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "portfolio_risk_clamp") {
+		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateBlocksWhenQtyBelowMinOrder(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "BTCUSDT", Balance: 50, Price: 60000, MinOrderQty: 0.001, Leverage: 3,
+		MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("entry below min order qty should be blocked, got %s", safe.Action)
+	}
+	if !hasRule(rejections, "below_min_order_qty") {
+		t.Fatalf("expected below_min_order_qty rejection, got %+v", rejections)
+	}
+}
+
+func TestValidateAllowsEntryWhenQtyAboveMin(t *testing.T) {
+	g := New(0.0)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
+	acc := agent.AccountState{
+		Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3,
+		MaxPortfolioRisk: 10, BalanceOK: true,
+	}
+	safe, _ := g.Validate(d, acc)
+	if safe.Action != agent.ActionEnterLong {
+		t.Fatalf("low-price entry should remain, got %s", safe.Action)
+	}
+}
+
+// SHORT 진입도 LONG과 동일하게 모든 규칙의 보호를 받는다. IsEntry()가 양방향을
+// 포함한다는 불변식을 고정해, 누가 진입 판정을 건드려도 잡아낸다.
+func TestValidateProtectsShortEntry(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterShort, SizePct: 1, StopLossPct: 0, Confidence: 0.40}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	safe, rejections := g.Validate(d, acc)
+	if safe.Action != agent.ActionHold {
+		t.Fatalf("unsafe SHORT entry must be blocked, got %s", safe.Action)
+	}
+	if len(rejections) == 0 {
+		t.Fatal("expected rejections for unsafe SHORT entry")
+	}
+}
+
+// 비진입 액션(HOLD/CLOSE 등)은 가드를 그대로 통과한다 — 가드는 진입만 건드린다.
+func TestValidatePassesThroughNonEntry(t *testing.T) {
+	g := New(0.55)
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	for _, act := range []agent.Action{agent.ActionHold, agent.ActionClose, agent.ActionPartialClose, agent.ActionAdjustSL} {
+		d := agent.Decision{Action: act, Confidence: 0.0}
+		safe, rejections := g.Validate(d, acc)
+		if safe.Action != act {
+			t.Fatalf("non-entry %s should pass through unchanged, got %s", act, safe.Action)
+		}
+		if len(rejections) != 0 {
+			t.Fatalf("non-entry %s should produce no rejections, got %+v", act, rejections)
+		}
+	}
+}
+
+// 여러 규칙을 동시에 위반하면 rejection이 누적된다(전체 사유가 보고됨).
+func TestValidateAccumulatesRejections(t *testing.T) {
+	g := New(0.55)
+	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 0, Confidence: 0.40}
+	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
+	_, rejections := g.Validate(d, acc)
+	if !hasRule(rejections, "min_confidence") || !hasRule(rejections, "stop_loss_required") {
+		t.Fatalf("expected both min_confidence and stop_loss_required, got %+v", rejections)
+	}
+}
+
+func hasRule(rs []agent.Rejection, rule string) bool {
+	for _, r := range rs {
+		if r.Rule == rule {
+			return true
+		}
+	}
+	return false
+}
