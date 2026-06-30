@@ -7,6 +7,18 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
+### 🤖 [AI 에이전트 Phase 2-A~D 완료] Kimi council + runner — MockCouncil 검증, 다음=2-E·실호출 (2026-06-30)
+
+**설계서**: `docs/superpowers/specs/2026-06-30-ai-agent-phase2-design.md`. **계획**: `docs/superpowers/plans/2026-06-30-ai-agent-phase2.md`. 브랜치 `feat/ai-agent-phase2`(미머지). 커밋 `80e4b3a`~`cf333a1`.
+
+- ✅ **Kimi 연동**(`pkg/ai/chat.go`): OpenAI호환 `CallChatJSON(baseURL, apiKey, model, sys, user)`(base URL 분리) — 기존 `callOpenAI`(엔드포인트 하드코딩)·`callGemini` 무변경. Kimi=`api.moonshot.ai/v1`·json_object. **AI 응답 본문 1MB 캡**(OOM 방어)·빈choices/잘못된JSON 에러 테스트. httptest로 검증.
+- ✅ **SafeDecision 타입**(`pkg/agent/types.go`): `guard.Validate`가 `(SafeDecision, []Rejection)` 반환 → 검증 안 된 `Decision`은 executor에 **컴파일 단 차단**(타입 강제, 종전 관례를 타입으로). unexported 필드 + `NewSafeDecision`(guard 전용)·`Decision()`/`Action()` 접근자. runner의 `Execute func(agent.SafeDecision)` 시그니처로 우회 불가 실증.
+- ✅ **KimiCouncil**(`pkg/agent/brain/llm.go`): `LLMClient` 인터페이스 + 1호출 통합 Bull/Bear/Risk(DeepSeek 중심 일반화=`OpenAICompatLLM`). 호출실패·파싱실패(펜스 감싼 JSON fallback 포함)·환각action 전부 **HOLD 폴백**(루프 안전·guard가 진짜 안전망). 모델교체=`LLMClient` 구현 교체. mock으로 검증.
+- ✅ **runner**(`pkg/agent/runner/runner.go`): `RunOnce` 한 사이클(council→guard→execute→memory) + `classifyRegime`(채널 상/하단 10% → trending_up/down·else ranging)·`episodeID`(순수·결정론). 의존성 주입 E2E. **리뷰 보강(`cf333a1`)**: ①`OnReject` 콜백=guard가 막은 이유(저신뢰·SL없음·리스크예산) 가시화 ②`ErrOrphanRecord`=주문 체결 후 Record 실패를 "거래소엔 살아있는데 봇이 못 기억하는 고아 포지션"으로 구분(주문 자체 실패와 분리·청산/회고 필요) ③guard차단 진입 안전테스트.
+- ✅ **검증**: 전 패키지 build/vet/`gofmt`/`-race` green(`pkg/agent`·`brain`·`guard`·`memory`·`runner`·`ai` 전부 ok), 기존 실거래 봇(`pkg/bot`·`pkg/exchange`)·`callOpenAI`/`callGemini` 무변경 회귀0.
+- 🔴 **Kimi/DeepSeek 실호출 미연결**(키·잔액 상태 미확인). 현재는 MockCouncil만 — AI 비용 0. 충전·키 확인 후 2-F에서 실 `LLMClient`를 페이퍼에 연결.
+- 🔜 **다음 = 2-E**(최소 trigger + `cmd/agent` 진입점 + contextBuilder/accountBuilder 실 exchange 연동 + 페이퍼 가동, MockCouncil) → **2-F**(실 LLM 호출 켜기·프롬프트 튜닝, 충전 후). **비목표였던 것**: 2-E의 실 exchange 배선은 이번 plan 밖(runner는 주입형으로만 검증됨).
+
 ### 🤖 [AI 에이전트 Phase 1 완료] 토대(guard·memory·brain) — 페이퍼 전, 다음=Phase 2 (2026-06-30)
 
 **설계서**: `docs/superpowers/specs/2026-06-30-ai-trading-agent-design.md`. **계획**: `docs/superpowers/plans/2026-06-30-ai-agent-phase1.md`. 브랜치 `feat/ai-agent-phase1`(미머지 — 다음 세션서 머지 결정). 서브에이전트 구동 개발(태스크별 구현→스펙리뷰→코드품질리뷰).
