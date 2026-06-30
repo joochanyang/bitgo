@@ -88,6 +88,9 @@ func runCycle(r *runner.Runner, ex exchange.Exchange, cfg *config.Config, mem *m
 			log.Printf("[%s] context error: %v (skipping)", sym, err)
 			continue
 		}
+		// Close any open episodes the current price would have stopped out / taken profit,
+		// BEFORE the council recalls — so it learns from fresh outcomes this same tick.
+		retrospect(mem, sym, bctx.Price, time.Now())
 		acc, err := buildAccount(ex, sym, cfg.Symbols, cfg.Leverage, cfg.MaxPortfolioRiskPct)
 		if err != nil {
 			log.Printf("[%s] account error: %v (skipping)", sym, err)
