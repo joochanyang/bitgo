@@ -7,7 +7,16 @@
 
 ## 🔜 다음 세션 재개 지점 — "go 봇"
 
-### 🤖 [AI 에이전트 Phase 2-E 완료] cmd/agent 페이퍼 가동 — DeepSeek 자동선택·E2E 검증, 다음=2-F (2026-06-30)
+### 🤖 [AI 에이전트 2-F 1회 실측] 실 DeepSeek council 라이브 검증 — 작동 확인, 다음=장시간 관찰/튜닝 (2026-06-30)
+
+**머지 완료**: Phase 2 전체(2-A~E)가 `main`에 머지·푸시됨(merge `0dabe74`·`origin/main` 동기화·`feat/ai-agent-phase2` 삭제). 머지 정리 중 stray 바이너리 `agent`(8.8MB) 제거 + `.gitignore`에 `/agent` 박제(재발방지).
+
+- ✅ **실 DeepSeek 1회 사이클 실측**: `go build -o /tmp/agent ./cmd/agent && /tmp/agent`(60s). `council=deepseek`·실 Bybit 공개데이터(`regime=ranging price=0.4268 balanceOK=true`)·즉시1회 사이클 후 idle·Ctrl-C 깨끗. **WLD가 ranging이라 진입로그·guard로그 없음 = HOLD(정상)**.
+- ✅ **DeepSeek API 라이브 검증**(직접 curl 2회): ①단순호출 HTTP200·실 completion·`deepseek-v4-flash`·과금 작동 ②council형 호출(json_object·실 system/user 프롬프트·max_tokens 무제한) → `content`에 **클린 파싱가능 JSON**: `{"action":"HOLD","confidence":0.6,"reasoning":"Market is in a ranging regime..."}`. 즉 `CallChatJSON`→`agent.Decision` 매핑 정상, 아까 무진입은 **진짜 HOLD 결정**(에러폴백 아님)으로 확정.
+- 🔴🔴 **함정 발견·박제 — `deepseek-v4-flash`는 추론(reasoning) 모델**: 응답이 `reasoning_content`에 먼저 쌓이고 `content`는 나중에 채워짐. **`max_tokens`를 작게 주면 reasoning이 예산을 다 먹어 `content`가 빈 문자열(`finish_reason:length`)→JSON 파싱 실패→조용한 HOLD 폴백**(실측: max_tokens=10 → content=""). 현재 `pkg/ai/chat.go CallChatJSON`은 **max_tokens 무전송(무제한)** 이라 안전. **향후 비용절감으로 max_tokens 캡 걸면 council이 영영 HOLD만 뱉는 사일런트 버그가 됨 — 캡 걸 거면 reasoning 몫까지 충분히(예: 2000+).**
+- 🔜 **다음 = 장시간 관찰/프롬프트 튜닝**: 4h봉이라 자연 사이클 4시간 주기. 진입신호 보려면 ①변동성 큰 심볼 추가(config `symbols`) 또는 ②`cmd/agent`를 백그라운드 상주(홈서버/run 스크립트)로 며칠 돌려 guard차단·근거·진입의도 로그 수집. 그 후 회고 자동화(`memory.Close`)·실 executor(PlaceOrder).
+
+### 🤖 [AI 에이전트 Phase 2-E 완료] cmd/agent 페이퍼 가동 — DeepSeek 자동선택·E2E 검증 (2026-06-30, 2-F에서 실 DeepSeek 검증됨)
 
 **설계서**: `docs/superpowers/specs/2026-06-30-ai-agent-phase2e-design.md`. **계획**: `docs/superpowers/plans/2026-06-30-ai-agent-phase2e.md`. 브랜치 `feat/ai-agent-phase2`. 커밋 `95a89bb`~`8fc4e5c`. 서브에이전트 구동 개발(태스크별 구현→리뷰).
 
