@@ -4,6 +4,7 @@
 package runner
 
 import (
+	"errors"
 	"fmt"
 
 	"go-bot/pkg/agent"
@@ -37,26 +38,39 @@ func episodeID(symbol string, openedAtUnixNano int64, nonce string) string {
 
 // Runner wires the agent cycle. Dependencies are injected so tests can use mocks. The
 // Execute callback receives only a SafeDecision (guard-validated), and Record persists
-// the episode. NowNano/Nonce make episode IDs deterministic in tests.
+// the episode. NowNano/Nonce make episode IDs deterministic in tests. OnReject, if set,
+// receives the guard's rejection reasons when it downgraded a decision — without it the
+// operator has no way to know WHY the bot held (low confidence? no SL? risk budget?).
 type Runner struct {
-	Council brain.Council
-	Guard   *guard.Guard
-	Execute func(agent.SafeDecision) error
-	Record  func(agent.TradeEpisode) error
-	NowNano func() int64
-	Nonce   func() string
+	Council  brain.Council
+	Guard    *guard.Guard
+	Execute  func(agent.SafeDecision) error
+	Record   func(agent.TradeEpisode) error
+	OnReject func([]agent.Rejection) // optional: surfaces why the guard blocked/clamped
+	NowNano  func() int64
+	Nonce    func() string
 }
+
+// ErrOrphanRecord wraps a Record failure that happened AFTER the order was already
+// executed. Callers must treat this as "the position exists on the exchange but the bot
+// failed to remember it" — not as "the order didn't go through". Distinguishing the two
+// is critical: the orphan position still needs close/retrospective handling.
+var ErrOrphanRecord = errors.New("order executed but episode record failed (orphan position)")
 
 // RunOnce runs one cycle: council decides, guard validates, and — only if the validated
 // action is an entry — the executor runs and the episode is recorded. HOLD or a guard
-// downgrade results in no execution and no record.
+// downgrade results in no execution and no record; any guard rejections are surfaced via
+// OnReject so the operator can see why nothing happened.
 func (r *Runner) RunOnce(ctx brain.Context, acc agent.AccountState) error {
 	decision, err := r.Council.Deliberate(ctx)
 	if err != nil {
 		return fmt.Errorf("council: %w", err)
 	}
 
-	safe, _ := r.Guard.Validate(decision, acc)
+	safe, rejections := r.Guard.Validate(decision, acc)
+	if len(rejections) > 0 && r.OnReject != nil {
+		r.OnReject(rejections)
+	}
 
 	if !safe.Action().IsEntry() {
 		return nil // HOLD / non-entry / guard-blocked: nothing to execute
@@ -74,7 +88,9 @@ func (r *Runner) RunOnce(ctx brain.Context, acc agent.AccountState) error {
 		EntryPrice: ctx.Price,
 	}
 	if err := r.Record(ep); err != nil {
-		return fmt.Errorf("record: %w", err)
+		// Order is ALREADY placed at this point. Flag it as an orphan so the caller
+		// (and any alerting) treats it as a live-but-untracked position, not a no-op.
+		return fmt.Errorf("%w: episode=%s: %v", ErrOrphanRecord, ep.ID, err)
 	}
 	return nil
 }
