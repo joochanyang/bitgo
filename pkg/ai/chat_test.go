@@ -53,3 +53,31 @@ func TestCallChatJSONHTTPError(t *testing.T) {
 		t.Fatalf("expected 403 error, got %v", err)
 	}
 }
+
+// 200이지만 choices가 비면 에러(빈 응답 방어).
+func TestCallChatJSONEmptyChoices(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"choices":[]}`)
+	}))
+	defer srv.Close()
+
+	c := NewAIClient()
+	_, err := c.CallChatJSON(srv.URL, "k", "m", "s", "u")
+	if err == nil || !strings.Contains(err.Error(), "no completion choices") {
+		t.Fatalf("expected no-choices error, got %v", err)
+	}
+}
+
+// 200이지만 본문이 JSON이 아니면 에러(악성/손상 응답 방어).
+func TestCallChatJSONBadJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `not json at all`)
+	}))
+	defer srv.Close()
+
+	c := NewAIClient()
+	_, err := c.CallChatJSON(srv.URL, "k", "m", "s", "u")
+	if err == nil {
+		t.Fatal("expected JSON parse error, got nil")
+	}
+}

@@ -71,10 +71,11 @@ type Rejection struct {
 	Message string `json:"message"`
 }
 
-// SafeDecision is a Decision that has passed the risk guard. The executor accepts only
-// SafeDecision, so a Decision that never went through guard.Validate cannot be executed
-// — the type enforces what was previously only a convention. The wrapped decision is
-// unexported; construct via NewSafeDecision (the guard) and read via the accessors.
+// SafeDecision is a Decision that has passed the risk guard. The executor (wired in a
+// later phase) will accept only SafeDecision, so a Decision that never went through
+// guard.Validate cannot be executed — the type enforces what would otherwise be only a
+// convention. The wrapped decision is unexported; construct via NewSafeDecision (the
+// guard) and read via the accessors.
 type SafeDecision struct {
 	d Decision
 }

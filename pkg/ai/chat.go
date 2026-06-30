@@ -41,7 +41,9 @@ func (ac *AIClient) CallChatJSON(baseURL, apiKey, model, systemPrompt, userPromp
 	}
 	defer resp.Body.Close()
 
-	respBytes, err := io.ReadAll(resp.Body)
+	// Cap the body read at 1MB. A chat completion is far smaller; the limit guards
+	// against a corrupted or hostile response streaming an unbounded body into memory.
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", err
 	}
