@@ -31,6 +31,9 @@ func NewLLMCouncil(llm LLMClient) *LLMCouncil {
 	return &LLMCouncil{llm: llm}
 }
 
+// Compile-time check that LLMCouncil satisfies the Council interface.
+var _ Council = (*LLMCouncil)(nil)
+
 const councilSystemPrompt = `You are a disciplined crypto futures trader. Weigh the bullish case and the bearish case, factor in the lessons from past similar trades, then output ONE final decision as strict JSON with these keys:
 {"action": "ENTER_LONG|ENTER_SHORT|HOLD|CLOSE|PARTIAL_CLOSE|ADJUST_SL", "size_pct": number, "stop_loss_pct": number, "take_profit_pct": number, "confidence": number (0-1), "reasoning": string, "bull_case": string, "bear_case": string}
 Be conservative: when unsure, HOLD. Always include a stop_loss_pct for entries.`
@@ -56,7 +59,7 @@ func (c *LLMCouncil) Deliberate(ctx Context) (agent.Decision, error) {
 	}
 
 	var raw rawDecision
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &raw); err != nil {
+	if err := json.Unmarshal([]byte(extractJSON(out)), &raw); err != nil {
 		return hold, nil // unparseable -> HOLD
 	}
 
@@ -72,6 +75,21 @@ func (c *LLMCouncil) Deliberate(ctx Context) (agent.Decision, error) {
 		Confidence:    raw.Confidence,
 		Reasoning:     raw.Reasoning,
 	}, nil
+}
+
+// extractJSON returns the substring from the first '{' to the last '}'. DeepSeek/OpenAI
+// in json_object mode return pure JSON, but a model that doesn't support that mode may
+// wrap the object in a ```json fence or prose; slicing to the outermost braces lets such
+// output still parse instead of silently falling back to HOLD forever. Returns the
+// trimmed input unchanged when no braces are found (then Unmarshal fails -> HOLD).
+func extractJSON(s string) string {
+	s = strings.TrimSpace(s)
+	start := strings.IndexByte(s, '{')
+	end := strings.LastIndexByte(s, '}')
+	if start < 0 || end < start {
+		return s
+	}
+	return s[start : end+1]
 }
 
 func knownAction(a agent.Action) bool {
@@ -120,6 +138,6 @@ func NewOpenAICompatLLM(baseURL, apiKey, model string) *OpenAICompatLLM {
 }
 
 // Complete calls the chat API and returns the JSON content.
-func (k *OpenAICompatLLM) Complete(systemPrompt, userPrompt string) (string, error) {
-	return k.ai.CallChatJSON(k.baseURL, k.apiKey, k.model, systemPrompt, userPrompt)
+func (o *OpenAICompatLLM) Complete(systemPrompt, userPrompt string) (string, error) {
+	return o.ai.CallChatJSON(o.baseURL, o.apiKey, o.model, systemPrompt, userPrompt)
 }

@@ -55,6 +55,16 @@ func TestLLMCouncilNormalizesUnknownAction(t *testing.T) {
 	}
 }
 
+// ```json 펜스나 앞뒤 산문으로 감싼 JSON도 파싱된다(json_object 미지원 모델 방어).
+func TestLLMCouncilParsesFencedJSON(t *testing.T) {
+	llm := stubLLM{out: "Here is my decision:\n```json\n{\"action\":\"ENTER_SHORT\",\"confidence\":0.6}\n```\nDone."}
+	c := NewLLMCouncil(llm)
+	got, _ := c.Deliberate(Context{Symbol: "WLDUSDT"})
+	if got.Action != agent.ActionEnterShort {
+		t.Fatalf("fenced JSON should parse to ENTER_SHORT, got %s", got.Action)
+	}
+}
+
 func TestOpenAICompatLLMConstructs(t *testing.T) {
 	var _ LLMClient = (*OpenAICompatLLM)(nil)
 	k := NewOpenAICompatLLM("https://api.deepseek.com/v1", "key", "deepseek-v4-flash")
