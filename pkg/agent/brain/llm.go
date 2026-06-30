@@ -10,23 +10,25 @@ import (
 )
 
 // LLMClient is the minimal LLM call the council needs: given a system and user prompt,
-// return the assistant's text (expected to be JSON). Real impl wraps pkg/ai.CallChatJSON
-// against Kimi; tests inject a stub. Swapping models = swapping this implementation.
+// return the assistant's text (expected to be JSON). The production impl wraps
+// pkg/ai.CallChatJSON against an OpenAI-compatible endpoint (DeepSeek by default; Kimi,
+// OpenAI, etc. work the same way). Tests inject a stub. Swapping models = swapping the
+// endpoint/model passed to OpenAICompatLLM, not changing the council.
 type LLMClient interface {
 	Complete(systemPrompt, userPrompt string) (string, error)
 }
 
-// KimiCouncil runs the Bull/Bear/Risk deliberation as a single structured LLM call and
-// maps the JSON result to a Decision. Any failure (call error, bad JSON, unknown action)
-// falls back to HOLD — the council never crashes the trading loop, and the guard is the
-// real safety net regardless.
-type KimiCouncil struct {
+// LLMCouncil runs the Bull/Bear/Risk deliberation as a single structured LLM call and
+// maps the JSON result to a Decision. It is model-agnostic — any LLMClient works. Any
+// failure (call error, bad JSON, unknown action) falls back to HOLD, so the council
+// never crashes the trading loop; the guard is the real safety net regardless.
+type LLMCouncil struct {
 	llm LLMClient
 }
 
-// NewKimiCouncil returns a Council backed by the given LLM client.
-func NewKimiCouncil(llm LLMClient) *KimiCouncil {
-	return &KimiCouncil{llm: llm}
+// NewLLMCouncil returns a Council backed by the given LLM client.
+func NewLLMCouncil(llm LLMClient) *LLMCouncil {
+	return &LLMCouncil{llm: llm}
 }
 
 const councilSystemPrompt = `You are a disciplined crypto futures trader. Weigh the bullish case and the bearish case, factor in the lessons from past similar trades, then output ONE final decision as strict JSON with these keys:
@@ -45,12 +47,12 @@ type rawDecision struct {
 
 // Deliberate builds the prompt, calls the LLM, and maps the JSON to a Decision. Falls
 // back to HOLD on any failure.
-func (c *KimiCouncil) Deliberate(ctx Context) (agent.Decision, error) {
+func (c *LLMCouncil) Deliberate(ctx Context) (agent.Decision, error) {
 	hold := agent.Decision{Action: agent.ActionHold, Confidence: 0, Reasoning: "council fallback"}
 
 	out, err := c.llm.Complete(councilSystemPrompt, buildUserPrompt(ctx))
 	if err != nil {
-		return hold, nil // LLM unavailable (e.g. balance) -> safe no-op
+		return hold, nil // LLM unavailable (e.g. balance/network) -> safe no-op
 	}
 
 	var raw rawDecision
@@ -100,21 +102,24 @@ func buildUserPrompt(ctx Context) string {
 	return b.String()
 }
 
-// KimiLLM is the production LLMClient: it calls Kimi (Moonshot, OpenAI-compatible) via
-// pkg/ai.CallChatJSON. base URL is "https://api.moonshot.ai/v1", model e.g. "kimi-k2.6".
-type KimiLLM struct {
+// OpenAICompatLLM is the production LLMClient: it calls any OpenAI-compatible chat API
+// via pkg/ai.CallChatJSON. For DeepSeek (the chosen model) use baseURL
+// "https://api.deepseek.com/v1" and model "deepseek-v4-flash" (cheap, fast) or
+// "deepseek-v4-pro". The same type serves Kimi/OpenAI by passing their base URL.
+type OpenAICompatLLM struct {
 	ai      *ai.AIClient
 	baseURL string
 	apiKey  string
 	model   string
 }
 
-// NewKimiLLM builds a KimiLLM. Wire baseURL/apiKey/model from config/env (MOONSHOT_*).
-func NewKimiLLM(baseURL, apiKey, model string) *KimiLLM {
-	return &KimiLLM{ai: ai.NewAIClient(), baseURL: baseURL, apiKey: apiKey, model: model}
+// NewOpenAICompatLLM builds an OpenAICompatLLM. Wire baseURL/apiKey/model from
+// config/env (e.g. DEEPSEEK_API_KEY).
+func NewOpenAICompatLLM(baseURL, apiKey, model string) *OpenAICompatLLM {
+	return &OpenAICompatLLM{ai: ai.NewAIClient(), baseURL: baseURL, apiKey: apiKey, model: model}
 }
 
-// Complete calls Kimi and returns the JSON content.
-func (k *KimiLLM) Complete(systemPrompt, userPrompt string) (string, error) {
+// Complete calls the chat API and returns the JSON content.
+func (k *OpenAICompatLLM) Complete(systemPrompt, userPrompt string) (string, error) {
 	return k.ai.CallChatJSON(k.baseURL, k.apiKey, k.model, systemPrompt, userPrompt)
 }
