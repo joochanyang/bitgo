@@ -43,13 +43,13 @@ cmd/agent/main.go
 - 기본값: baseURL `https://api.deepseek.com/v1`(env `DEEPSEEK_BASE_URL`로 오버라이드), model `deepseek-v4-flash`(env `DEEPSEEK_MODEL`로 오버라이드). 라벨은 기동 로그에 찍어 어떤 council인지 가시화.
 
 ### `cmd/agent/context.go` — `buildContext`
-- `buildContext(ex exchange.Exchange, symbol string, mem *memory.Store, recallK int) (brain.Context, error)`.
-- 최근 캔들 fetch(`GetKlines`, lookback+여유) → 직전 N봉(현재봉 제외) rollingHigh/rollingLow로 채널 계산 → `classifyRegime(price, low, high)`(이미 runner에 있으나 비공개 → cmd/agent에 동일한 작은 순수 헬퍼를 둔다. 두 곳의 분류 기준이 같아야 하므로 상수/로직을 동일하게 유지).
+- `buildContext(ex exchange.Exchange, symbol, interval string, mem *memory.Store, recallK int) (brain.Context, error)`.
+- 최근 캔들 fetch(`GetKlines(symbol, interval, lookback+여유)` — interval은 config에서, Bybit는 빈 interval 거부하므로 반드시 전달) → 직전 N봉(현재봉 제외) rollingHigh/rollingLow로 채널 계산 → `classifyRegime(price, low, high)`(이미 runner에 있으나 비공개 → cmd/agent에 동일한 작은 순수 헬퍼를 둔다. 두 곳의 분류 기준이 같아야 하므로 상수/로직을 동일하게 유지).
 - price = 마지막 종가. `mem.Recall(symbol, regime, recallK)`로 Past 채움.
 - 캔들 부족·fetch 실패 → 에러 반환(호출측이 그 심볼 skip).
 
 ### `cmd/agent/account.go` — `buildAccount`
-- `buildAccount(ex exchange.Exchange, symbol string, allSymbols []string, cfg) (agent.AccountState, error)`.
+- `buildAccount(ex exchange.Exchange, symbol string, allSymbols []string, leverage int, maxPortfolioRisk float64) (agent.AccountState, error)` (config 값을 풀어서 전달 — 헬퍼가 config 구조에 의존하지 않게).
 - `GetBalance()` 실패 시 `BalanceOK=false`(나머지 필드 채워 반환 — guard가 진입 차단). 성공 시 `BalanceOK=true`.
 - price = `GetTicker(symbol)`. MinOrderQty = 거래소 instruments-info(없으면 0 → guard의 최소수량 규칙이 보수적으로 처리).
 - CommittedRiskUSDT = 다른 심볼들의 열린 포지션 합산 리스크: 각 심볼 `GetPosition` → `strategy.PositionRiskUSDT(size, entry, sl)` 합. (기존 엔진 `committedPortfolioRisk` 로직과 동일한 공개 헬퍼 사용.)
