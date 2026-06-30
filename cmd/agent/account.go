@@ -11,6 +11,11 @@ import (
 // whole tick. CommittedRiskUSDT sums the stop-loss risk of OTHER symbols' open positions
 // (the candidate symbol's own risk is not pre-committed). leverage and maxPortfolioRisk
 // come from config.
+//
+// ponytail: MinOrderQty is left 0, so the guard's below_min_order_qty rule is inert for
+// the agent. Harmless in paper mode (no orders), but it's a real safety rule once a live
+// executor places orders — wire it before 2-F live trading. The Exchange interface has no
+// min-qty getter today (getInstrumentFilter is unexported), so exposing one is a prereq.
 func buildAccount(ex exchange.Exchange, symbol string, allSymbols []string, leverage int, maxPortfolioRisk float64) (agent.AccountState, error) {
 	acc := agent.AccountState{
 		Symbol:           symbol,
