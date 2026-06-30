@@ -9,6 +9,7 @@ agent_memory.json
 # Build artifacts
 /gobot
 /gobot-*
+/agent
 *.exe
 *.out
 
