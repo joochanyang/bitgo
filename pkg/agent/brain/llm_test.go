@@ -54,3 +54,11 @@ func TestKimiCouncilNormalizesUnknownAction(t *testing.T) {
 		t.Fatalf("unknown action should normalize to HOLD, got %s", got.Action)
 	}
 }
+
+func TestKimiLLMConstructs(t *testing.T) {
+	var _ LLMClient = (*KimiLLM)(nil)
+	k := NewKimiLLM("https://api.moonshot.ai/v1", "key", "kimi-k2.6")
+	if k.baseURL == "" || k.model == "" {
+		t.Fatal("KimiLLM fields not set")
+	}
+}

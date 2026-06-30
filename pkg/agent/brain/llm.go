@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go-bot/pkg/agent"
+	"go-bot/pkg/ai"
 )
 
 // LLMClient is the minimal LLM call the council needs: given a system and user prompt,
@@ -97,4 +98,23 @@ func buildUserPrompt(ctx Context) string {
 		}
 	}
 	return b.String()
+}
+
+// KimiLLM is the production LLMClient: it calls Kimi (Moonshot, OpenAI-compatible) via
+// pkg/ai.CallChatJSON. base URL is "https://api.moonshot.ai/v1", model e.g. "kimi-k2.6".
+type KimiLLM struct {
+	ai      *ai.AIClient
+	baseURL string
+	apiKey  string
+	model   string
+}
+
+// NewKimiLLM builds a KimiLLM. Wire baseURL/apiKey/model from config/env (MOONSHOT_*).
+func NewKimiLLM(baseURL, apiKey, model string) *KimiLLM {
+	return &KimiLLM{ai: ai.NewAIClient(), baseURL: baseURL, apiKey: apiKey, model: model}
+}
+
+// Complete calls Kimi and returns the JSON content.
+func (k *KimiLLM) Complete(systemPrompt, userPrompt string) (string, error) {
+	return k.ai.CallChatJSON(k.baseURL, k.apiKey, k.model, systemPrompt, userPrompt)
 }
