@@ -70,3 +70,24 @@ type Rejection struct {
 	Rule    string `json:"rule"`
 	Message string `json:"message"`
 }
+
+// SafeDecision is a Decision that has passed the risk guard. The executor (wired in a
+// later phase) will accept only SafeDecision, so a Decision that never went through
+// guard.Validate cannot be executed — the type enforces what would otherwise be only a
+// convention. The wrapped decision is unexported; construct via NewSafeDecision (the
+// guard) and read via the accessors.
+type SafeDecision struct {
+	d Decision
+}
+
+// NewSafeDecision wraps a validated decision. Intended to be called only by the guard
+// after Validate has applied all risk rules.
+func NewSafeDecision(d Decision) SafeDecision {
+	return SafeDecision{d: d}
+}
+
+// Decision returns the underlying validated decision.
+func (s SafeDecision) Decision() Decision { return s.d }
+
+// Action returns the validated action (convenience accessor).
+func (s SafeDecision) Action() Action { return s.d.Action }

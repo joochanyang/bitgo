@@ -20,3 +20,14 @@ func TestActionIsEntry(t *testing.T) {
 		}
 	}
 }
+
+func TestSafeDecisionWrapsDecision(t *testing.T) {
+	d := Decision{Action: ActionEnterLong, SizePct: 1, Confidence: 0.8}
+	sd := NewSafeDecision(d)
+	if sd.Decision() != d {
+		t.Fatalf("SafeDecision should expose the wrapped decision; got %+v", sd.Decision())
+	}
+	if sd.Action() != ActionEnterLong {
+		t.Fatalf("Action() accessor wrong: %s", sd.Action())
+	}
+}

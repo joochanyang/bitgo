@@ -4,10 +4,12 @@ config.json
 .env.local
 logs.json
 trades.json
+agent_memory.json
 
 # Build artifacts
 /gobot
 /gobot-*
+/agent
 *.exe
 *.out
 
