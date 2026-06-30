@@ -23,8 +23,8 @@ func TestPipelineGuardBlocksUnsafeCouncilDecision(t *testing.T) {
 
 	safe, rejections := g.Validate(decision, acc)
 
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("guard must block SL-less entry, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("guard must block SL-less entry, got %s", safe.Action())
 	}
 	if len(rejections) == 0 {
 		t.Fatal("expected rejection from guard")
@@ -42,7 +42,7 @@ func TestPipelineAllowsSafeDecision(t *testing.T) {
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
 
 	safe, _ := g.Validate(decision, acc)
-	if safe.Action != agent.ActionEnterLong {
-		t.Fatalf("safe entry should pass, got %s", safe.Action)
+	if safe.Action() != agent.ActionEnterLong {
+		t.Fatalf("safe entry should pass, got %s", safe.Action())
 	}
 }

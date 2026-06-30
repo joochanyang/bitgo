@@ -21,7 +21,7 @@ func New(minConfidence float64) *Guard {
 
 // Validate applies risk rules to a decision and returns the safe-to-execute version
 // plus any rejections (rule violations that were corrected). Rules are additive.
-func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decision, []agent.Rejection) {
+func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.SafeDecision, []agent.Rejection) {
 	var rejections []agent.Rejection
 
 	// Rule: low-confidence entries are downgraded to HOLD.
@@ -101,5 +101,5 @@ func (g *Guard) Validate(d agent.Decision, acc agent.AccountState) (agent.Decisi
 		}
 	}
 
-	return d, rejections
+	return agent.NewSafeDecision(d), rejections
 }

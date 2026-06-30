@@ -11,8 +11,8 @@ func TestValidateDowngradesLowConfidence(t *testing.T) {
 	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.40}
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("low-confidence entry should downgrade to HOLD, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("low-confidence entry should downgrade to HOLD, got %s", safe.Action())
 	}
 	if len(rejections) == 0 {
 		t.Fatal("expected a rejection explaining the downgrade")
@@ -24,8 +24,8 @@ func TestValidateKeepsConfidentEntry(t *testing.T) {
 	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.80}
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
 	safe, _ := g.Validate(d, acc)
-	if safe.Action != agent.ActionEnterLong {
-		t.Fatalf("confident entry should be kept, got %s", safe.Action)
+	if safe.Action() != agent.ActionEnterLong {
+		t.Fatalf("confident entry should be kept, got %s", safe.Action())
 	}
 }
 
@@ -34,8 +34,8 @@ func TestValidateRejectsEntryWithoutStopLoss(t *testing.T) {
 	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 0, Confidence: 0.9}
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("entry without SL must be downgraded to HOLD, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("entry without SL must be downgraded to HOLD, got %s", safe.Action())
 	}
 	if !hasRule(rejections, "stop_loss_required") {
 		t.Fatalf("expected stop_loss_required rejection, got %+v", rejections)
@@ -47,8 +47,8 @@ func TestValidateBlocksEntryWhenBalanceUnknown(t *testing.T) {
 	d := agent.Decision{Action: agent.ActionEnterLong, SizePct: 1, StopLossPct: 2, Confidence: 0.9}
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 0, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: false}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("entry with unknown balance must be blocked, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("entry with unknown balance must be blocked, got %s", safe.Action())
 	}
 	if !hasRule(rejections, "balance_unknown") {
 		t.Fatalf("expected balance_unknown rejection, got %+v", rejections)
@@ -63,11 +63,11 @@ func TestValidateClampsSizeToPortfolioBudget(t *testing.T) {
 		CommittedRiskUSDT: 4.5, MaxPortfolioRisk: 10, BalanceOK: true,
 	}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionEnterLong {
-		t.Fatalf("entry should remain, got %s", safe.Action)
+	if safe.Action() != agent.ActionEnterLong {
+		t.Fatalf("entry should remain, got %s", safe.Action())
 	}
-	if safe.SizePct > 1.0001 {
-		t.Fatalf("sizePct should be clamped to ~1%%, got %v", safe.SizePct)
+	if safe.Decision().SizePct > 1.0001 {
+		t.Fatalf("sizePct should be clamped to ~1%%, got %v", safe.Decision().SizePct)
 	}
 	if !hasRule(rejections, "portfolio_risk_clamp") {
 		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
@@ -82,8 +82,8 @@ func TestValidateBlocksEntryWhenBudgetExhausted(t *testing.T) {
 		CommittedRiskUSDT: 5.0, MaxPortfolioRisk: 10, BalanceOK: true,
 	}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("exhausted budget should block entry, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("exhausted budget should block entry, got %s", safe.Action())
 	}
 	if !hasRule(rejections, "portfolio_risk_clamp") {
 		t.Fatalf("expected portfolio_risk_clamp rejection, got %+v", rejections)
@@ -98,8 +98,8 @@ func TestValidateBlocksWhenQtyBelowMinOrder(t *testing.T) {
 		MaxPortfolioRisk: 10, BalanceOK: true,
 	}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("entry below min order qty should be blocked, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("entry below min order qty should be blocked, got %s", safe.Action())
 	}
 	if !hasRule(rejections, "below_min_order_qty") {
 		t.Fatalf("expected below_min_order_qty rejection, got %+v", rejections)
@@ -114,8 +114,8 @@ func TestValidateAllowsEntryWhenQtyAboveMin(t *testing.T) {
 		MaxPortfolioRisk: 10, BalanceOK: true,
 	}
 	safe, _ := g.Validate(d, acc)
-	if safe.Action != agent.ActionEnterLong {
-		t.Fatalf("low-price entry should remain, got %s", safe.Action)
+	if safe.Action() != agent.ActionEnterLong {
+		t.Fatalf("low-price entry should remain, got %s", safe.Action())
 	}
 }
 
@@ -126,8 +126,8 @@ func TestValidateProtectsShortEntry(t *testing.T) {
 	d := agent.Decision{Action: agent.ActionEnterShort, SizePct: 1, StopLossPct: 0, Confidence: 0.40}
 	acc := agent.AccountState{Symbol: "WLDUSDT", Balance: 50, Price: 0.5, MinOrderQty: 1, Leverage: 3, MaxPortfolioRisk: 10, BalanceOK: true}
 	safe, rejections := g.Validate(d, acc)
-	if safe.Action != agent.ActionHold {
-		t.Fatalf("unsafe SHORT entry must be blocked, got %s", safe.Action)
+	if safe.Action() != agent.ActionHold {
+		t.Fatalf("unsafe SHORT entry must be blocked, got %s", safe.Action())
 	}
 	if len(rejections) == 0 {
 		t.Fatal("expected rejections for unsafe SHORT entry")
@@ -141,8 +141,8 @@ func TestValidatePassesThroughNonEntry(t *testing.T) {
 	for _, act := range []agent.Action{agent.ActionHold, agent.ActionClose, agent.ActionPartialClose, agent.ActionAdjustSL} {
 		d := agent.Decision{Action: act, Confidence: 0.0}
 		safe, rejections := g.Validate(d, acc)
-		if safe.Action != act {
-			t.Fatalf("non-entry %s should pass through unchanged, got %s", act, safe.Action)
+		if safe.Action() != act {
+			t.Fatalf("non-entry %s should pass through unchanged, got %s", act, safe.Action())
 		}
 		if len(rejections) != 0 {
 			t.Fatalf("non-entry %s should produce no rejections, got %+v", act, rejections)
