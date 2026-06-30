@@ -3,7 +3,13 @@
 // outcome. It wires Phase 1/2 components together without touching the live rule-bot.
 package runner
 
-import "fmt"
+import (
+	"fmt"
+
+	"go-bot/pkg/agent"
+	"go-bot/pkg/agent/brain"
+	"go-bot/pkg/agent/guard"
+)
 
 // classifyRegime tags the market state from where price sits in the [low, high] channel.
 // Within 10% of the top -> trending_up, within 10% of the bottom -> trending_down, else
@@ -27,4 +33,48 @@ func classifyRegime(price, low, high float64) string {
 // the function stays deterministic and testable.
 func episodeID(symbol string, openedAtUnixNano int64, nonce string) string {
 	return fmt.Sprintf("%s-%d-%s", symbol, openedAtUnixNano, nonce)
+}
+
+// Runner wires the agent cycle. Dependencies are injected so tests can use mocks. The
+// Execute callback receives only a SafeDecision (guard-validated), and Record persists
+// the episode. NowNano/Nonce make episode IDs deterministic in tests.
+type Runner struct {
+	Council brain.Council
+	Guard   *guard.Guard
+	Execute func(agent.SafeDecision) error
+	Record  func(agent.TradeEpisode) error
+	NowNano func() int64
+	Nonce   func() string
+}
+
+// RunOnce runs one cycle: council decides, guard validates, and — only if the validated
+// action is an entry — the executor runs and the episode is recorded. HOLD or a guard
+// downgrade results in no execution and no record.
+func (r *Runner) RunOnce(ctx brain.Context, acc agent.AccountState) error {
+	decision, err := r.Council.Deliberate(ctx)
+	if err != nil {
+		return fmt.Errorf("council: %w", err)
+	}
+
+	safe, _ := r.Guard.Validate(decision, acc)
+
+	if !safe.Action().IsEntry() {
+		return nil // HOLD / non-entry / guard-blocked: nothing to execute
+	}
+
+	if err := r.Execute(safe); err != nil {
+		return fmt.Errorf("execute: %w", err)
+	}
+
+	ep := agent.TradeEpisode{
+		ID:         episodeID(ctx.Symbol, r.NowNano(), r.Nonce()),
+		Symbol:     ctx.Symbol,
+		Regime:     ctx.Regime,
+		Decision:   safe.Decision(),
+		EntryPrice: ctx.Price,
+	}
+	if err := r.Record(ep); err != nil {
+		return fmt.Errorf("record: %w", err)
+	}
+	return nil
 }
